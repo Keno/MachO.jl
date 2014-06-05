@@ -10,7 +10,8 @@
 
 module MachO
 
-export readmeta, readheader, LoadCmds, Sections
+export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
+    debugsections
 
 ############################ Data Structures ###################################
 
@@ -36,7 +37,7 @@ using StrPack
 #
 ################################################################################
 
-#
+abstract MachOLC
 
 @struct immutable mach_header
     magic::Uint32
@@ -64,16 +65,16 @@ end
     cmdsize::Uint32
 end
 
-@struct immutable uuid_command
-    uuid::Uint128
-end
-
 # A 16 byte string, represented as a Uint128, but shown as a string
 @struct immutable small_fixed_string
     string::Uint128
 end
 
-@struct immutable segment_command
+@struct immutable uuid_command <: MachOLC
+    uuid::Uint128
+end
+
+@struct immutable segment_command <: MachOLC
     shename::small_fixed_string
     vmaddr::Uint32
     vmsize::Uint32
@@ -85,7 +86,7 @@ end
     flags::Uint32
 end
 
-@struct immutable segment_command_64
+@struct immutable segment_command_64 <: MachOLC
     segname::small_fixed_string
     vmaddr::Uint64
     vmsize::Uint64
@@ -97,7 +98,7 @@ end
     flags::Uint32
 end
 
-@struct immutable section
+@struct immutable section <: MachOLC
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::Uint32
@@ -111,7 +112,7 @@ end
     reserved2::Uint32
 end
 
-@struct immutable section_64
+@struct immutable section_64 <: MachOLC
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::Uint64
@@ -125,14 +126,14 @@ end
     reserved2::Uint32
 end
 
-@struct immutable symtab_command
+@struct immutable symtab_command <: MachOLC
     symoff::Uint32
     nsyms::Uint32
     stroff::Uint32
     strsize::Uint32
 end
 
-@struct immutable dysymtab_command
+@struct immutable dysymtab_command <: MachOLC
     ilocalsym::Uint32
     nlocalsym::Uint32
     iextdefsym::Uint32
@@ -153,10 +154,30 @@ end
     nlocrel::Uint32
 end
 
+@struct immutable version_min_macosx_command <: MachOLC
+    version::Uint32
+    sdk::Uint32
+end
+
+@struct immutable nlist
+    n_strx::Uint32
+    n_type::Uint8
+    n_sect::Uint8
+    n_desc::Uint16
+    n_value::Uint32
+end
+
+@struct immutable nlist_64
+    n_strx::Uint32
+    n_type::Uint8
+    n_sect::Uint8
+    n_desc::Uint16
+    n_value::Uint64
+end
 
 ########################### Printing Data Structures ###########################
 #
-# This prints the basic Mach-O data structures above. Where there is no good 
+# This prints the basic Mach-O data structures above. Where there is no good
 # reason not to, the output matches that of otool.
 #
 ################################################################################
@@ -168,7 +189,13 @@ function bytestring(x::small_fixed_string)
     z = findfirst(a8,0)
     ASCIIString(a8[1:(z == 0 ? length(a8) : z-1)])
 end
+show(io::IO,x::small_fixed_string) = show(io,bytestring(x))
 print(io::IO,x::small_fixed_string) = print(io,bytestring(x))
+
+==(x::small_fixed_string,y::String) = bytestring(x) == y
+==(x::String,y::small_fixed_string) = y==x
+
+*(a::ASCIIString,b::small_fixed_string) = a*bytestring(b)
 
 function printfield(io::IO,string,fieldlength)
     print(io," "^max(fieldlength-length(string),0))
@@ -221,7 +248,7 @@ end
 printentry(io::IO,header,values...) = (printfield(io,header,15);println(io," ",values...))
 # Showing Load commands
 function show(io::IO,l::Union(segment_command_64,segment_command))
-    println("Load Command (",isa(l,segment_command_64)?"SEGMENT_64":
+    println(io,"Load Command (",isa(l,segment_command_64)?"SEGMENT_64":
         "SEGMENT","):")
 
     printentry(io,"name",l.segname)
@@ -248,7 +275,7 @@ end
 
 function show(io::IO, s::Union(section,section_64))
     #function body
-    println("  Section:")
+    println(io,"  Section:")
 
     printentry(io,"sectname",s.sectname)
     printentry(io,"segname",s.segname)
@@ -263,7 +290,7 @@ function show(io::IO, s::Union(section,section_64))
 end
 
 function show(io::IO,l::symtab_command)
-    println("Load Command (SYMTAB):")
+    println(io,"Load Command (SYMTAB):")
     printentry(io,"symoff",dec(l.symoff))
     printentry(io,"nsyms",dec(l.nsyms))
     printentry(io,"stroff",dec(l.stroff))
@@ -271,7 +298,7 @@ function show(io::IO,l::symtab_command)
 end
 
 function show(io::IO,l::dysymtab_command)
-    println("Load Command (DYSYMTAB):")
+    println(io,"Load Command (DYSYMTAB):")
     printentry(io,"ilocalsym",dec(l.ilocalsym))
     printentry(io,"nlocalsym",dec(l.nlocalsym))
     printentry(io,"iextdefsym",dec(l.iextdefsym))
@@ -283,20 +310,34 @@ function show(io::IO,l::dysymtab_command)
     printentry(io,"modtaboff",dec(l.modtaboff))
     printentry(io,"nmodtab",dec(l.nmodtab))
     printentry(io,"extrefsymoff",dec(l.extrefsymoff))
-    printentry(io,"nextrefsyms",dec(l.nextrefsyms))    
+    printentry(io,"nextrefsyms",dec(l.nextrefsyms))
     printentry(io,"indirectsymoff",dec(l.indirectsymoff))
     printentry(io,"nindirectsyms",dec(l.nindirectsyms))
     printentry(io,"extreloff",dec(l.extreloff))
     printentry(io,"nextrel",dec(l.nextrel))
     printentry(io,"locreloff",dec(l.locreloff))
-    printentry(io,"nlocrel",dec(l.nlocrel))       
+    printentry(io,"nlocrel",dec(l.nlocrel))
+end
+
+function decodeversion(io::IO, version::Uint32)
+    print(io,version>>16)
+    print(io,'.')
+    print(io,(version>>8)&0xFF)
+    print(io,'.')
+    print(io,version&0xFF)
+end
+
+function show(io::IO,l::version_min_macosx_command)
+    println(io,"Load Command (VERSION_MIN_MACOSX):")
+    printentry(io,"version",sprint(decodeversion,l.version))
+    printentry(io,"sdk",sprint(decodeversion,l.sdk))
 end
 
 ################################ Interface #####################################
 
 import Base: show,
     # IO methods
-    read, write, seek, seekstart, position,
+    read, write, seek, seekstart, position, readuntil,
     # Iteration
     start, next, done,
     # Indexing
@@ -346,7 +387,7 @@ function readmeta(io::IO)
         return MachOHandle(io,start,false,true)
     elseif magic == MH_CIGAM_64
         return MachOHandle(io,start,true,true)
-    else 
+    else
         error("Invalid Magic!")
     end
 end
@@ -363,12 +404,16 @@ function readloadcmd(h::MachOHandle)
         return (cmd,unpack(h, symtab_command))
     elseif cmd.cmd == LC_DYSYMTAB
         return (cmd,unpack(h, dysymtab_command))
+    elseif cmd.cmd == LC_VERSION_MIN_MACOSX
+        return (cmd,unpack(h, version_min_macosx_command))
     else
-        error("Unimplemented load command $(cmd.cmd)")
+        error("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
     end
 end
 
 ## Iteration
+
+import Base: eltype
 
 # Iterate over the load commands of a file
 # If the header has
@@ -382,7 +427,18 @@ immutable LoadCmds
     start::Uint64
     ncmds::Uint32
     sizeofcmds::Uint32
-end 
+end
+
+immutable LoadCmd{T<:MachOLC}
+    h::MachOHandle
+    off::Uint64
+    cmd::T
+end
+
+show{T}(io::IO, x::LoadCmd{T}) = (print(io,"0x",hex(x.off,8),":\n "); show(io,x.cmd); print(io,'\n'))
+
+LoadCmd{T<:MachOLC}(h::MachOHandle, off::Uint64, cmd::T) = LoadCmd{T}(h,off,cmd)
+eltype{T<:MachOLC}(::LoadCmd{T}) = T
 
 function LoadCmds(h::MachOHandle, header = nothing, start = -1)
     if header === nothing
@@ -401,7 +457,7 @@ start(l::LoadCmds) = (l.start,0,0)
 function next(l::LoadCmds,state)
     seek(l.h,state[1]+state[3])
     cmdh,cmd = readloadcmd(l.h)
-    (cmd,(state[1]+state[3],state[2]+1,cmdh.cmdsize))
+    (LoadCmd(l.h,state[1]+state[3],cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
 end
 done(l::LoadCmds,state) = state[2] >= l.ncmds
 
@@ -418,6 +474,13 @@ immutable Sections
             start = position(h)
         end
         new(h,segment,start)
+    end
+    function Sections(segment::LoadCmd)
+        if !(eltype(segment) <: segment_commands)
+            error("Load command is not a segment")
+        end
+        start = segment.off + sizeof(eltype(segment)) + sizeof(load_command)
+        new(segment.h,segment.cmd,start)
     end
 end
 
@@ -437,6 +500,7 @@ next(s::Sections,n) = (s[n],n+1)
 
 
 read{T<:IO}(io::MachOHandle{T},args...) = read(io.io,args...)
+readuntil{T<:IO}(io::MachOHandle{T},args...) = readuntil(io.io,args...)
 write{T<:IO}(io::MachOHandle{T},args...) = write(io.io,args...)
 seek{T<:IO}(io::MachOHandle{T},pos) = seek(io.io,io.start+pos)
 seekstart(io::MachOHandle) = seek(io.io,io.start)
@@ -452,5 +516,42 @@ function readheader(h::MachOHandle)
     seekstart(h)
     unpack(h,h.is64 ? mach_header_64 : mach_header)
 end
+
+# Access to Symbols
+immutable Symbols
+    h::MachOHandle
+    command::symtab_command
+    start::Int
+    function Symbols(h::MachOHandle, segment::symtab_command, start=-1)
+        if start==-1
+            start = position(h)
+        end
+        new(h,segment,start)
+    end
+end
+
+start(s::Symbols) = 1
+done(s::Symbols,n) = n > length(s)
+next(s::Symbols,n) = (s[n],n+1)
+
+length(s::Symbols) = s.command.nsyms
+function getindex(s::Symbols,n)
+    if n < 1 || n > length(s)
+        throw(BoundsError())
+    end
+    sT = s.h.is64 ? nlist_64 : nlist
+    seek(s.h,s.command.symoff + (n-1)*sizeof(sT))
+    unpack(s.h, sT)
+end
+
+function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
+    seek(io,command.stroff+offset)
+    strip(readuntil(io,'\0'),'\0')
+end
+
+symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, command, sym.n_strx)
+segname(x::Union(segment_command_64,section_64)) = x.segname
+segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
+sectname(x::section_64) = x.sectname
 
 end # module
