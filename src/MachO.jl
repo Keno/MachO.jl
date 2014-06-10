@@ -10,6 +10,13 @@
 
 module MachO
 
+# This package implements the ObjFileBase interface
+import ObjFileBase
+import ObjFileBase: sectionsize, sectionoffset, readheader
+
+# Reexports from ObjFileBase
+export sectionsize, sectionoffset, readheader
+
 export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
     debugsections
 
@@ -98,7 +105,7 @@ end
     flags::Uint32
 end
 
-@struct immutable section <: MachOLC
+@struct immutable section <: ObjFileBase.Section{MachOHandle}
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::Uint32
@@ -112,7 +119,7 @@ end
     reserved2::Uint32
 end
 
-@struct immutable section_64 <: MachOLC
+@struct immutable section_64 <: ObjFileBase.Section{MachOHandle}
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::Uint64
@@ -159,7 +166,7 @@ end
     sdk::Uint32
 end
 
-@struct immutable nlist
+@struct immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
     n_strx::Uint32
     n_type::Uint8
     n_sect::Uint8
@@ -167,7 +174,7 @@ end
     n_value::Uint32
 end
 
-@struct immutable nlist_64
+@struct immutable nlist_64 <: ObjFileBase.SymtabEntry{MachOHandle}
     n_strx::Uint32
     n_type::Uint8
     n_sect::Uint8
@@ -337,7 +344,7 @@ end
 
 import Base: show,
     # IO methods
-    read, write, seek, seekstart, position, readuntil,
+    read, write, seek, seekstart, position, readuntil, readbytes,
     # Iteration
     start, next, done,
     # Indexing
@@ -348,21 +355,23 @@ import StrPack: unpack, pack
 #
 # Represents the actual MachO file
 #
-immutable MachOHandle{T<:IO}
+immutable MachOHandle{T<:IO} <: ObjectHandle
     # The IO object. This field is speciallized on to avoid dispatch performance
     # hits, especially when operating on an IOBuffer, which is an important
     # usecase for in-memory files
     io::T
     # position(io) of the start of the file in the io stream.
     start::Int
-    # Whether or not the data is bswap'ed in memory (i.e. has different 
+    # Whether or not the data is bswap'ed in memory (i.e. has different
     # endianness)
     bswapped::Bool
     # Whether or not the file is 64bit
     is64::Bool
 end
 
-MachOHandle{T<:IO}(io::T,start::Int,bswapped::Bool,is64::Bool) = 
+endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
+
+MachOHandle{T<:IO}(io::T,start::Int,bswapped::Bool,is64::Bool) =
     MachOHandle{T}(io,start,bswapped,is64)
 
 function show(io::IO,h::MachOHandle)
@@ -373,8 +382,8 @@ function show(io::IO,h::MachOHandle)
 end
 
 #
-# The main entry point for MachO.jl (see ELF.jl for comparison). Constructs
-# and initializes the MachOHandle object
+# Note that this function is different from ObjFileBase.readmeta
+# Constructs and initializes the MachOHandle object
 #
 function readmeta(io::IO)
     start = position(io)
@@ -391,6 +400,7 @@ function readmeta(io::IO)
         error("Invalid Magic!")
     end
 end
+ObjFileBase.readmeta(io::IO,::Type{MachOHandle}) = readmeta(io)
 
 function readloadcmd(h::MachOHandle)
     cmd = unpack(h,load_command)
@@ -499,9 +509,11 @@ done(s::Sections,n) = n > length(s)
 next(s::Sections,n) = (s[n],n+1)
 
 
-read{T<:IO}(io::MachOHandle{T},args...) = read(io.io,args...)
-readuntil{T<:IO}(io::MachOHandle{T},args...) = readuntil(io.io,args...)
-write{T<:IO}(io::MachOHandle{T},args...) = write(io.io,args...)
+for f in (:read,:readuntil,:readbytes,:write)
+    @eval $(f){T<:IO}(io::MachOHandle{T},args...) = $(f)(io.io,args...)
+end
+
+
 seek{T<:IO}(io::MachOHandle{T},pos) = seek(io.io,io.start+pos)
 seekstart(io::MachOHandle) = seek(io.io,io.start)
 position{T<:IO}(io::MachOHandle{T}) = position(io.io)-io.start
@@ -512,10 +524,13 @@ unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
 pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) = 
     pack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
 
-function readheader(h::MachOHandle) 
+function readheader(h::MachOHandle)
     seekstart(h)
     unpack(h,h.is64 ? mach_header_64 : mach_header)
 end
+
+sectionsize(sect::Union(section,section_64)) = sect.size
+sectionoffset(sect::Union(section,section_64)) = sect.offset
 
 # Access to Symbols
 immutable Symbols
@@ -553,5 +568,23 @@ symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, comma
 segname(x::Union(segment_command_64,section_64)) = x.segname
 segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
 sectname(x::section_64) = x.sectname
+
+### DWARF support
+
+using DWARF
+
+function debugsections{T<:segment_commands}(seg::LoadCmd{T})
+    sects = collect(Sections(seg))
+    snames = map(sectname,sects)
+    sections = Dict{ASCIIString,section_64}()
+    for i in 1:length(snames)
+        # remove leading "__"
+        ind = findfirst(DWARF.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
+        if ind != 0
+            sections[DWARF.DEBUG_SECTIONS[ind]] = sects[i]
+        end
+    end
+    sections
+end
 
 end # module
