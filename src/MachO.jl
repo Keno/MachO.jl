@@ -10,12 +10,15 @@
 
 module MachO
 
+# For printing
+import Base: show, print, bytestring
+
 # This package implements the ObjFileBase interface
 import ObjFileBase
-import ObjFileBase: sectionsize, sectionoffset, readheader
+import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta
 
 # Reexports from ObjFileBase
-export sectionsize, sectionoffset, readheader
+export sectionsize, sectionoffset, readheader, readmeta
 
 export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
     debugsections
@@ -34,12 +37,43 @@ include("constants.jl")
 #
 using StrPack
 
+# MachOHandle
+
+#
+# Represents the actual MachO file
+#
+immutable MachOHandle{T<:IO} <: ObjectHandle
+    # The IO object. This field is speciallized on to avoid dispatch performance
+    # hits, especially when operating on an IOBuffer, which is an important
+    # usecase for in-memory files
+    io::T
+    # position(io) of the start of the file in the io stream.
+    start::Int
+    # Whether or not the data is bswap'ed in memory (i.e. has different
+    # endianness)
+    bswapped::Bool
+    # Whether or not the file is 64bit
+    is64::Bool
+end
+
+endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
+
+MachOHandle{T<:IO}(io::T,start::Int,bswapped::Bool,is64::Bool) =
+    MachOHandle{T}(io,start,bswapped,is64)
+
+function show(io::IO,h::MachOHandle)
+    print(io,"MachO handle (")
+    print(io,h.is64?"64-bit":"32-bit")
+    h.bswapped && print(io,",swapped")
+    print(io,")")
+end
+
 
 ############################ Data Structures ###################################
 #
 # This section contains data structures as defined by the MachO specification.
-# They are used below to acutally read in the data and may be ocassionally 
-# referenced from interface structs where this is convenient and no other 
+# They are used below to acutally read in the data and may be ocassionally
+# referenced from interface structs where this is convenient and no other
 # interface exists
 #
 ################################################################################
@@ -82,7 +116,7 @@ end
 end
 
 @struct immutable segment_command <: MachOLC
-    shename::small_fixed_string
+    segname::small_fixed_string
     vmaddr::Uint32
     vmsize::Uint32
     fileoff::Uint32
@@ -166,6 +200,47 @@ end
     sdk::Uint32
 end
 
+@struct immutable lc_str
+    offset::Uint32
+end
+
+@struct immutable dylib
+    name::lc_str
+    timestamp::Uint32
+    current_version::Uint32
+    compatibilty::Uint32
+end
+
+@struct immutable dylib_command <: MachOLC
+    dylib::dylib
+end
+
+@struct immutable dyld_info_command <: MachOLC
+    rebase_off::Uint32
+    rebase_size::Uint32
+    bind_off::Uint32
+    bind_size::Uint32
+    weak_bind_off::Uint32
+    weak_bind_size::Uint32
+    lazy_bind_off::Uint32
+    lazy_bind_size::Uint32
+    export_off::Uint32
+    export_size::Uint32
+end
+
+@struct immutable source_version_command <: MachOLC
+    version::Uint64
+end
+
+@struct immutable linkedit_data_command <: MachOLC
+    offset::Uint32
+    size::Uint32
+end
+
+@struct immutable sub_framework_command <: MachOLC
+    umbrella::lc_str
+end
+
 @struct immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
     n_strx::Uint32
     n_type::Uint8
@@ -182,14 +257,24 @@ end
     n_value::Uint64
 end
 
+@struct immutable fat_header
+    nfat_arch::Uint32
+end
+
+@struct immutable fat_arch
+    cputype::Uint32
+    cpusubtype::Uint32
+    offset::Uint32
+    size::Uint32
+    align::Uint32
+end
+
 ########################### Printing Data Structures ###########################
 #
 # This prints the basic Mach-O data structures above. Where there is no good
 # reason not to, the output matches that of otool.
 #
 ################################################################################
-
-import Base: show, print, bytestring
 
 function bytestring(x::small_fixed_string)
     a8 = reinterpret(Uint8,[x.string])
@@ -353,35 +438,6 @@ import Base: show,
 import StrPack: unpack, pack
 
 #
-# Represents the actual MachO file
-#
-immutable MachOHandle{T<:IO} <: ObjectHandle
-    # The IO object. This field is speciallized on to avoid dispatch performance
-    # hits, especially when operating on an IOBuffer, which is an important
-    # usecase for in-memory files
-    io::T
-    # position(io) of the start of the file in the io stream.
-    start::Int
-    # Whether or not the data is bswap'ed in memory (i.e. has different
-    # endianness)
-    bswapped::Bool
-    # Whether or not the file is 64bit
-    is64::Bool
-end
-
-endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
-
-MachOHandle{T<:IO}(io::T,start::Int,bswapped::Bool,is64::Bool) =
-    MachOHandle{T}(io,start,bswapped,is64)
-
-function show(io::IO,h::MachOHandle)
-    print(io,"MachO handle (")
-    print(io,h.is64?"64-bit":"32-bit")
-    h.bswapped && print(io,",swapped")
-    print(io,")")
-end
-
-#
 # Note that this function is different from ObjFileBase.readmeta
 # Constructs and initializes the MachOHandle object
 #
@@ -396,26 +452,42 @@ function readmeta(io::IO)
         return MachOHandle(io,start,false,true)
     elseif magic == MH_CIGAM_64
         return MachOHandle(io,start,true,true)
+    elseif magic == FAT_CIGAM || magic == FAT_MAGIC
+        return FatMachOHandle(io,start)
     else
-        error("Invalid Magic!")
+        error("Invalid Magic ($(hex(magic)))!")
     end
 end
 ObjFileBase.readmeta(io::IO,::Type{MachOHandle}) = readmeta(io)
 
 function readloadcmd(h::MachOHandle)
     cmd = unpack(h,load_command)
-    if cmd.cmd == LC_UUID
+    ccmd = cmd.cmd & ~LC_REQ_DYLD
+    if ccmd == LC_UUID
         return (cmd,unpack(h, uuid_command))
-    elseif cmd.cmd == LC_SEGMENT
+    elseif ccmd == LC_SEGMENT
         return (cmd,unpack(h, segment_command))
-    elseif cmd.cmd == LC_SEGMENT_64
+    elseif ccmd == LC_SEGMENT_64
         return (cmd,unpack(h, segment_command_64))
-    elseif cmd.cmd == LC_SYMTAB
+    elseif ccmd == LC_SYMTAB
         return (cmd,unpack(h, symtab_command))
-    elseif cmd.cmd == LC_DYSYMTAB
+    elseif ccmd == LC_DYSYMTAB
         return (cmd,unpack(h, dysymtab_command))
-    elseif cmd.cmd == LC_VERSION_MIN_MACOSX
+    elseif ccmd == LC_VERSION_MIN_MACOSX
         return (cmd,unpack(h, version_min_macosx_command))
+    elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
+        cmd.cmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
+        return (cmd,unpack(h, dylib_command))
+    elseif ccmd == LC_DYLD_INFO
+        return (cmd,unpack(h, dyld_info_command))
+    elseif ccmd == LC_SOURCE_VERSION
+        return (cmd,unpack(h, source_version_command))
+    elseif ccmd == LC_CODE_SIGNATURE || ccmd == LC_SEGMENT_SPLIT_INFO ||
+            ccmd == LC_FUNCTION_STARTS || ccmd == LC_DATA_IN_CODE ||
+            ccmd == LC_DYLIB_CODE_SIGN_DRS
+        return (cmd,unpack(h, linkedit_data_command))
+    elseif ccmd == LC_SUB_FRAMEWORK
+        return (cmd,unpack(h,sub_framework_command))
     else
         error("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
     end
@@ -461,18 +533,19 @@ function LoadCmds(h::MachOHandle, header = nothing, start = -1)
 end
 
 # A tuple of the position before the current load command,
-# the number of the load command and the size of the current load 
+# the number of the load command and the size of the current load
 # command. I.e. the next load command will be found at state[1]+state[3]
 start(l::LoadCmds) = (l.start,0,0)
+seek(l::LoadCmds,state) = seek(l.h,state[1]+state[3])
 function next(l::LoadCmds,state)
-    seek(l.h,state[1]+state[3])
+    seek(l,state)
     cmdh,cmd = readloadcmd(l.h)
     (LoadCmd(l.h,state[1]+state[3],cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
 end
 done(l::LoadCmds,state) = state[2] >= l.ncmds
 
 # Access to sections
- 
+
 typealias segment_commands Union(segment_command_64,segment_command)
 
 immutable Sections
@@ -495,7 +568,7 @@ immutable Sections
 end
 
 length(s::Sections) = s.command.nsects
-function getindex(s::Sections,n) 
+function getindex(s::Sections,n)
     if n < 1 || n > length(s)
         throw(BoundsError())
     end
@@ -509,19 +582,20 @@ done(s::Sections,n) = n > length(s)
 next(s::Sections,n) = (s[n],n+1)
 
 
-for f in (:read,:readuntil,:readbytes,:write)
+for f in (:read,:readuntil,:write)
     @eval $(f){T<:IO}(io::MachOHandle{T},args...) = $(f)(io.io,args...)
 end
+readbytes{T<:IO}(io::MachOHandle{T},num::Integer) = readbytes(io.io,num)
 
 
-seek{T<:IO}(io::MachOHandle{T},pos) = seek(io.io,io.start+pos)
+seek{T<:IO}(io::MachOHandle{T},pos::Integer) = seek(io.io,io.start+pos)
 seekstart(io::MachOHandle) = seek(io.io,io.start)
 position{T<:IO}(io::MachOHandle{T}) = position(io.io)-io.start
 
-unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) = 
+unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     unpack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
 
-pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) = 
+pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     pack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
 
 function readheader(h::MachOHandle)
@@ -536,12 +610,11 @@ sectionoffset(sect::Union(section,section_64)) = sect.offset
 immutable Symbols
     h::MachOHandle
     command::symtab_command
-    start::Int
-    function Symbols(h::MachOHandle, segment::symtab_command, start=-1)
-        if start==-1
-            start = position(h)
-        end
+    function Symbols(h::MachOHandle, segment::symtab_command)
         new(h,segment,start)
+    end
+    function Symbols(lc::LoadCmd{symtab_command})
+        new(lc.h,lc.cmd)
     end
 end
 
@@ -565,9 +638,36 @@ function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
 end
 
 symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, command, sym.n_strx)
+symname(x::LoadCmd{symtab_command}, sym) = symname(x.h, x.cmd, sym)
 segname(x::Union(segment_command_64,section_64)) = x.segname
 segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
 sectname(x::section_64) = x.sectname
+
+### Fat Handle
+immutable FatMachOHandle
+    io::IO
+    start::Uint64
+    header::fat_header
+    archs::Vector{fat_arch}
+end
+
+function FatMachOHandle(io,start)
+    header = unpack(io,fat_header,:BigEndian)
+    archs = Array(fat_arch,header.nfat_arch)
+    for i in 1:header.nfat_arch
+        archs[i] = unpack(io,fat_arch,:BigEndian)
+    end
+    FatMachOHandle(io,start,header,archs)
+end
+
+function getindex(h::FatMachOHandle,i)
+    seek(h.io,h.start + h.archs[i].offset)
+    readmeta(h.io,MachOHandle)
+end
+
+### Compact Unwind Support
+
+include("compact_unwind.jl")
 
 ### DWARF support
 

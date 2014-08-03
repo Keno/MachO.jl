@@ -30,6 +30,9 @@ end
 
     const MH_MAGIC_64 = 0xfeedfacf
     const MH_CIGAM_64 = bswap(MH_MAGIC_64)
+
+    const FAT_MAGIC = 0xCAFEBABE
+    const FAT_CIGAM = bswap(FAT_MAGIC)
 end
 
 
@@ -44,7 +47,7 @@ const CPU_ARCH_ABI64 = 0x01000000
     # skip
     # skip
     # skip
-    const CPU_TYPE_MC680x0      = 6 
+    const CPU_TYPE_MC680x0      = 6
     const CPU_TYPE_X86          = 7
     const CPU_TYPE_X86_64       = CPU_TYPE_X86 | CPU_ARCH_ABI64
     const CPU_TYPE_MIPS         = 8
@@ -64,62 +67,62 @@ end
 # TODO subtype constants
 
 @constants FILETYPES "MH_" begin
-    const MH_OBJECT      = 0x1     # relocatable object file 
-    const MH_EXECUTE     = 0x2     # demand paged executable file 
-    const MH_FVMLIB      = 0x3     # fixed VM shared library file 
-    const MH_CORE        = 0x4     # core file 
-    const MH_PRELOAD     = 0x5     # preloaded executable file 
-    const MH_DYLIB       = 0x6     # dynamically bound shared library 
-    const MH_DYLINKER    = 0x7     # dynamic link editor 
-    const MH_BUNDLE      = 0x8     # dynamically bound bundle file 
+    const MH_OBJECT      = 0x1     # relocatable object file
+    const MH_EXECUTE     = 0x2     # demand paged executable file
+    const MH_FVMLIB      = 0x3     # fixed VM shared library file
+    const MH_CORE        = 0x4     # core file
+    const MH_PRELOAD     = 0x5     # preloaded executable file
+    const MH_DYLIB       = 0x6     # dynamically bound shared library
+    const MH_DYLINKER    = 0x7     # dynamic link editor
+    const MH_BUNDLE      = 0x8     # dynamically bound bundle file
     const MH_DYLIB_STUB  = 0x9     # shared library stub for static linking only
     const MH_DSYM        = 0xa     # companion file with only debug sections
-    const MH_KEXT_BUNDLE = 0xb     # x86_64 kexts 
+    const MH_KEXT_BUNDLE = 0xb     # x86_64 kexts
 end
 
-# Constants for the flags field of the mach_header 
+# Constants for the flags field of the mach_header
 
 @constants FLAGS "MH_" begin
     # the object file has no undefined references
     const MH_NOUNDEFS                   = 0x1
-    # the object file is the output of an incremental link 
+    # the object file is the output of an incremental link
     # against a base file and can't be link edited again
     const MH_INCRLINK                   = 0x2
-    # the object file is input for the dynamic linker 
+    # the object file is input for the dynamic linker
     # and can't be staticly link edited again
     const MH_DYLDLINK                   = 0x4
-    # the object file's undefined references are bound 
+    # the object file's undefined references are bound
     # by the dynamic linker when loaded
     const MH_BINDATLOAD                 = 0x8
     # the file has its dynamic undefined references prebound
     const MH_PREBOUND                   = 0x10
     # the file has its read-only and read-write segments split
     const MH_SPLIT_SEGS                 = 0x20
-    # the shared library init routine is to be run 
+    # the shared library init routine is to be run
     # lazily via catching memory faults to its writeable segments
     # (obsolete)
     const MH_LAZY_INIT                  = 0x40
     # the image is using two-level name space bindings
     const MH_TWOLEVEL                   = 0x80
-    # the executable is forcing all image to use flat 
+    # the executable is forcing all image to use flat
     # name space bindings
     const MH_FORCE_FLAT                 = 0x100
-    # this umbrella guarantees no multiple defintions of 
+    # this umbrella guarantees no multiple defintions of
     # symbols in its sub-images so the two-level namespace
     # hints can always be used
     const MH_NOMULTIDEFS                = 0x100
     # do not have dyld notify the prebinding agent about this
     # executable
     const MH_NOFIXPREBINDING            = 0x200
-    # the binary is not prebound but can have its prebinding 
+    # the binary is not prebound but can have its prebinding
     # redone. only used when MH_PREBOUND is not set.
     const MH_PREBINDABLE                = 0x400
-    # indicates that this binary binds to all two-level 
-    # namespace modules of its dependent libraries. 
+    # indicates that this binary binds to all two-level
+    # namespace modules of its dependent libraries.
     # only used when MH_PREBINDABLE and MH_TWOLEVEL are both set
     const MH_ALLMODSBOUND               = 0x800
-    # safe to divide up the sections into sub-sections 
-    # via symbols for dead code stripping 
+    # safe to divide up the sections into sub-sections
+    # via symbols for dead code stripping
     const MH_SUBSECTIONS_VIA_SYMBOLS    = 0x1000
     const MH_CANONICAL                  = 0x2000
     const MH_WEAK_DEFINES               = 0x4000
@@ -135,7 +138,7 @@ end
 end
 
 
-# Load command types 
+# Load command types
 
 const LC_REQ_DYLD = 0x80000000
 @constants LCTYPES "LC_" begin
@@ -199,16 +202,16 @@ const SECTION_ATTRIBUTES    = 0xffffff00 # 24 section attributes
 @constants SECTYPES "" begin
     # regular section
     const S_REGULAR                                 = 0x0
-    # zero fill on demand section      
+    # zero fill on demand section
     const S_ZEROFILL                                = 0x1
-    # section with only literal C string     
+    # section with only literal C string
     const S_CSTRING_LITERALS                        = 0x2
-    # section with only 4 byte literals     
+    # section with only 4 byte literals
     const S_4BYTE_LITERALS                          = 0x3
-    # section with only 8 byte literals     
+    # section with only 8 byte literals
     const S_8BYTE_LITERALS                          = 0x4
-    # section with only pointers to literals     
-    const S_LITERAL_POINTERS                        = 0x5 
+    # section with only pointers to literals
+    const S_LITERAL_POINTERS                        = 0x5
 #
 #  For the two types of symbol pointers sections and the symbol stubs section
 #  they have indirect symbol table entries.  For each of the entries in the
@@ -225,14 +228,14 @@ const SECTION_ATTRIBUTES    = 0xffffff00 # 24 section attributes
     const S_NON_LAZY_SYMBOL_POINTERS                = 0x6
     # section with only lazy symbol
     const S_LAZY_SYMBOL_POINTERS                    = 0x7
-    # section with only symbol stubs, byte 
+    # section with only symbol stubs, byte
     # size of stub in the reserved2 field
     const S_SYMBOL_STUBS                            = 0x8
-    # section with only function pointers 
+    # section with only function pointers
     # for initialization
     const S_MOD_INIT_FUNC_POINTERS                  = 0x9
-    # section with only function pointers 
-    # for initialization    
+    # section with only function pointers
+    # for initialization
     const S_MOD_TERM_FUNC_POINTERS                  = 0xa
     # section contains symbols that
     # are to be coalesced
@@ -240,14 +243,14 @@ const SECTION_ATTRIBUTES    = 0xffffff00 # 24 section attributes
     # zero fill on demand section
     # (that can be larger than 4 gigabytes)
     const S_GB_ZEROFILL                             = 0xc
-    # section with only pairs of function 
+    # section with only pairs of function
     # pointers for interposing
     const S_INTERPOSING                             = 0xd
     # section with only 16 byte literals
     const S_16BYTE_LITERALS                         = 0xe
     # section contains DTrace Object Format
     const S_DTRACE_DOF                              = 0xf
-    # section with only lazy symbol pointers 
+    # section with only lazy symbol pointers
     # to lazy loaded dylibs
     const S_LAZY_DYLIB_SYMBOL_POINTERS              = 0x10
     # template of initial values for TLVs
@@ -288,4 +291,71 @@ const SECTION_ATTRIBUTES_SYS = 0x00ffff00
     const S_ATTR_EXT_RELOC              = 0x00000200
     # section has local relocation entries
     const S_ATTR_LOC_RELOC              = 0x00000100
+end
+
+@constants UNWIND_FLAGS "UNWIND_" begin
+    const UNWIND_IS_NOT_FUNCTION_START  = 0x80000000
+    const UNWIND_HAS_LSDA               = 0x40000000
+    const UNWIND_PERSONALITY_MASK       = 0x30000000
+end
+
+@constants UNWIND_X86 "UNWIND_X86_" begin
+    const UNWIND_X86_MODE_MASK                          = 0x0F000000
+    const UNWIND_X86_MODE_EBP_FRAME                     = 0x01000000
+    const UNWIND_X86_MODE_STACK_IMMD                    = 0x02000000
+    const UNWIND_X86_MODE_STACK_IND                     = 0x03000000
+    const UNWIND_X86_MODE_DWARF                         = 0x04000000
+
+    const UNWIND_X86_EBP_FRAME_REGISTERS                = 0x00007FFF
+    const UNWIND_X86_EBP_FRAME_OFFSET                   = 0x00FF0000
+
+    const UNWIND_X86_FRAMELESS_STACK_SIZE               = 0x00FF0000
+    const UNWIND_X86_FRAMELESS_STACK_ADJUST             = 0x0000E000
+    const UNWIND_X86_FRAMELESS_STACK_REG_COUNT          = 0x00001C00
+    const UNWIND_X86_FRAMELESS_STACK_REG_PERMUTATION    = 0x000003FF
+
+    const UNWIND_X86_DWARF_SECTION_OFFSET               = 0x00FFFFFF
+end
+
+@constants UNWIND_X86_REGS "UNWIND_X86_REG_" begin
+    const UNWIND_X86_REG_NONE   = 0
+    const UNWIND_X86_REG_EBX    = 1
+    const UNWIND_X86_REG_ECX    = 2
+    const UNWIND_X86_REG_EDX    = 3
+    const UNWIND_X86_REG_EDI    = 4
+    const UNWIND_X86_REG_ESI    = 5
+    const UNWIND_X86_REG_EBP    = 6
+end
+
+@constants UNWIND_X86_64 "UNWIND_X86_64_" begin
+    const UNWIND_X86_64_MODE_MASK                          = 0x0F000000
+    const UNWIND_X86_64_MODE_EBP_FRAME                     = 0x01000000
+    const UNWIND_X86_64_MODE_STACK_IMMD                    = 0x02000000
+    const UNWIND_X86_64_MODE_STACK_IND                     = 0x03000000
+    const UNWIND_X86_64_MODE_DWARF                         = 0x04000000
+
+    const UNWIND_X86_64_EBP_FRAME_REGISTERS                = 0x00007FFF
+    const UNWIND_X86_64_EBP_FRAME_OFFSET                   = 0x00FF0000
+
+    const UNWIND_X86_64_FRAMELESS_STACK_SIZE               = 0x00FF0000
+    const UNWIND_X86_64_FRAMELESS_STACK_ADJUST             = 0x0000E000
+    const UNWIND_X86_64_FRAMELESS_STACK_REG_COUNT          = 0x00001C00
+    const UNWIND_X86_64_FRAMELESS_STACK_REG_PERMUTATION    = 0x000003FF
+
+    const UNWIND_X86_64_DWARF_SECTION_OFFSET               = 0x00FFFFFF
+end
+
+@constants UNWIND_X86_64_REGS "UNWIND_X86_64_REG_" begin
+    const UNWIND_X86_64_REG_NONE    = 0
+    const UNWIND_X86_64_REG_RBX     = 1
+    const UNWIND_X86_64_REG_R12     = 2
+    const UNWIND_X86_64_REG_R13     = 3
+    const UNWIND_X86_64_REG_R14     = 4
+    const UNWIND_X86_64_REG_R15     = 5
+    const UNWIND_X86_64_REG_RBP     = 6
+end
+
+@constants UNWIND_SECOND_LEVEL "UNWIND_SECOND_LEVEL_" begin
+    const UNWIND_SECOND_LEVEL_REGULAR       = 2
+    const UNWIND_SECOND_LEVEL_COMPRESSED    = 3
 end
