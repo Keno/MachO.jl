@@ -441,7 +441,7 @@ import StrPack: unpack, pack
 # Note that this function is different from ObjFileBase.readmeta
 # Constructs and initializes the MachOHandle object
 #
-function readmeta(io::IO)
+function readmeta(io::IO,::Type{MachOHandle})
     start = position(io)
     magic = read(io,Uint32)
     if magic == MH_MAGIC
@@ -458,7 +458,6 @@ function readmeta(io::IO)
         error("Invalid Magic ($(hex(magic)))!")
     end
 end
-ObjFileBase.readmeta(io::IO,::Type{MachOHandle}) = readmeta(io)
 
 function readloadcmd(h::MachOHandle)
     cmd = unpack(h,load_command)
@@ -658,6 +657,24 @@ function FatMachOHandle(io,start)
         archs[i] = unpack(io,fat_arch,:BigEndian)
     end
     FatMachOHandle(io,start,header,archs)
+end
+
+function show(io::IO,h::fat_arch)
+    printentry(io,"cputype",CPUTYPES[h.cputype])
+    # TODO: subtype printing
+    #printentry(io,"cputype",CPUSUBTYPES[h.cputype])
+    printentry(io,"offset","0x",hex(h.offset,2sizeof(Uint32)))
+    printentry(io,"size","0x",hex(h.size,2sizeof(Uint32)))
+    printentry(io,"align",dec(h.align))
+end
+
+function show(io::IO,h::FatMachOHandle)
+    print(io, "Fat Mach Handle (",length(h.archs), " architectures)")
+    for (i,arch) in enumerate(h.archs)
+        println(io)
+        println(io, "architecture ", i)
+        print(io, arch)
+    end
 end
 
 function getindex(h::FatMachOHandle,i)
