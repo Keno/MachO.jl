@@ -524,7 +524,7 @@ function readloadcmd(h::MachOHandle)
     elseif ccmd == LC_VERSION_MIN_MACOSX
         return (cmd,unpack(h, version_min_macosx_command))
     elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
-        cmd.cmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
+        ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
         return (cmd,unpack(h, dylib_command))
     elseif ccmd == LC_DYLD_INFO
         return (cmd,unpack(h, dyld_info_command))
@@ -539,7 +539,7 @@ function readloadcmd(h::MachOHandle)
     elseif ccmd == LC_RPATH
         return (cmd,unpack(h, rpath_command))
     else
-        info("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
+        info("Unimplemented load command $(LCTYPES[ccmd]) (0x$(hex(ccmd)))")
         return (cmd,dummy_lc())
     end
 end
@@ -565,12 +565,13 @@ end
 immutable LoadCmd{T<:MachOLC}
     h::MachOHandle
     off::Uint64
+    cmd_id::Uint32
     cmd::T
 end
 
 show{T}(io::IO, x::LoadCmd{T}) = (print(io,"0x",hex(x.off,8),":\n "); show(io,x.cmd); print(io,'\n'))
 
-LoadCmd{T<:MachOLC}(h::MachOHandle, off::Uint64, cmd::T) = LoadCmd{T}(h,off,cmd)
+LoadCmd{T<:MachOLC}(h::MachOHandle, off::Uint64, cmd_id::Uint32, cmd::T) = LoadCmd{T}(h,off,cmd_id,cmd)
 eltype{T<:MachOLC}(::LoadCmd{T}) = T
 
 function LoadCmds(h::MachOHandle, header = nothing, start = -1)
@@ -591,7 +592,7 @@ seek(l::LoadCmds,state) = seek(l.h,state[1]+state[3])
 function next(l::LoadCmds,state)
     seek(l,state)
     cmdh,cmd = readloadcmd(l.h)
-    (LoadCmd(l.h,state[1]+state[3],cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
+    (LoadCmd(l.h,state[1]+state[3],cmdh.cmd,cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
 end
 done(l::LoadCmds,state) = state[2] >= l.ncmds
 
