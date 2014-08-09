@@ -169,24 +169,24 @@ const LC_REQ_DYLD = 0x80000000
     # load a dynamically linked shared library that is allowed to be missing
     # (all symbols are weak imported).
     #
-    const LC_LOAD_WEAK_DYLIB        = (0x18|LC_REQ_DYLD)
+    const LC_LOAD_WEAK_DYLIB        = 0x18
     const LC_SEGMENT_64             = 0x19 # 64-bit segment of this file to be mapped
     const LC_ROUTINES_64            = 0x1a # 64-bit image routines
     const LC_UUID                   = 0x1b # the uuid
-    const LC_RPATH                  = (0x1c|LC_REQ_DYLD) # runpath additions
+    const LC_RPATH                  = 0x1c # runpath additions
     const LC_CODE_SIGNATURE         = 0x1d # local of code signature
     const LC_SEGMENT_SPLIT_INFO     = 0x1e # local of info to split segments
-    const LC_REEXPORT_DYLIB         = (0x1f|LC_REQ_DYLD) # load and re-export dylib
+    const LC_REEXPORT_DYLIB         = 0x1f # load and re-export dylib
     const LC_LAZY_LOAD_DYLIB        = 0x20 # delay load of dylib until first use
     const LC_ENCRYPTION_INFO        = 0x21 # encrypted segment information
     const LC_DYLD_INFO              = 0x22 # compressed dyld information
-    const LC_DYLD_INFO_ONLY         = (0x22|LC_REQ_DYLD) # compressed dyld information only
-    const LC_LOAD_UPWARD_DYLIB      = (0x23|LC_REQ_DYLD) # load upward dylib
+    const LC_DYLD_INFO_ONLY         = 0x22 # compressed dyld information only
+    const LC_LOAD_UPWARD_DYLIB      = 0x23 # load upward dylib
     const LC_VERSION_MIN_MACOSX     = 0x24 # build for MacOSX min OS version
     const LC_VERSION_MIN_IPHONEOS   = 0x25 # build for iPhoneOS min OS version
     const LC_FUNCTION_STARTS        = 0x26 # compressed table of function start addresses
     const LC_DYLD_ENVIRONMENT       = 0x27 # string for dyld to treat like environment variable
-    const LC_MAIN                   = (0x28|LC_REQ_DYLD) # replacement for LC_UNIXTHREAD
+    const LC_MAIN                   = 0x28 # replacement for LC_UNIXTHREAD
     const LC_DATA_IN_CODE           = 0x29 # table of non-instructions in __text
     const LC_SOURCE_VERSION         = 0x2A # source version used to build binary
     const LC_DYLIB_CODE_SIGN_DRS    = 0x2B # Code signing DRs copied from linked dylibs

@@ -12,6 +12,7 @@ module MachO
 
 # For printing
 import Base: show, print, bytestring
+import StrPack: unpack, pack
 
 # This package implements the ObjFileBase interface
 import ObjFileBase
@@ -79,6 +80,10 @@ end
 ################################################################################
 
 abstract MachOLC
+
+# Dummy lc that we use to return when we don't know what a certain load command is
+immutable dummy_lc <: MachOLC
+end
 
 @struct immutable mach_header
     magic::Uint32
@@ -200,19 +205,43 @@ end
     sdk::Uint32
 end
 
-@struct immutable lc_str
-    offset::Uint32
-end
-
-@struct immutable dylib
-    name::lc_str
+immutable dylib_command <: MachOLC
+    name::String
     timestamp::Uint32
     current_version::Uint32
     compatibilty::Uint32
 end
 
-@struct immutable dylib_command <: MachOLC
-    dylib::dylib
+# This seems like it's missing from base...
+function bytestring(io::IOStream)
+    str = Uint8[]
+    c = read(io, Uint8)
+    while c != 0x00
+        push!(str, c)
+        c = read(io, Uint8)
+    end
+    return bytestring(str)
+end
+
+function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command})
+    # Get endianness converter
+    endianness = h.bswapped ? :SwappedEndian : :NativeEndian
+    tgtendianness = StrPack.endianness_converters[endianness][2]
+
+    # Get the offset
+    offset = tgtendianness(read(h.io, Uint32))
+
+    # Now get timestamp, current_version and compatibilty
+    timestamp = tgtendianness(read(h.io, Uint32))
+    current_version = tgtendianness(read(h.io, Uint32))
+    compatibilty = tgtendianness(read(h.io, Uint32))
+
+    # Seek to the previously mentioned offset
+    skip(h.io, offset - 6*sizeof(Uint32))
+
+    # Read in a cstring
+    name = bytestring(h.io)
+    return dylib_command(name, timestamp, current_version, compatibilty)
 end
 
 @struct immutable dyld_info_command <: MachOLC
@@ -237,8 +266,27 @@ end
     size::Uint32
 end
 
-@struct immutable sub_framework_command <: MachOLC
-    umbrella::lc_str
+immutable sub_framework_command <: MachOLC
+    umbrella::String
+end
+
+immutable rpath_command <: MachOLC
+    path::String
+end
+
+for T in [sub_framework_command, rpath_command]
+    @eval function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{$T})
+        # Get endianness converter
+        endianness = h.bswapped ? :SwappedEndian : :NativeEndian
+        tgtendianness = StrPack.endianness_converters[endianness][2]
+
+        # Get the offset
+        offset = tgtendianness(read(h.io, Uint32))
+
+        # Seek to the previously mentioned offset
+        skip(h.io, offset - 3*sizeof(Uint32))
+        return $T(bytestring(h.io))
+    end
 end
 
 @struct immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
@@ -268,6 +316,7 @@ end
     size::Uint32
     align::Uint32
 end
+
 
 ########################### Printing Data Structures ###########################
 #
@@ -435,7 +484,7 @@ import Base: show,
     # Indexing
     length, getindex
 
-import StrPack: unpack, pack
+
 
 #
 # Note that this function is different from ObjFileBase.readmeta
@@ -486,9 +535,12 @@ function readloadcmd(h::MachOHandle)
             ccmd == LC_DYLIB_CODE_SIGN_DRS
         return (cmd,unpack(h, linkedit_data_command))
     elseif ccmd == LC_SUB_FRAMEWORK
-        return (cmd,unpack(h,sub_framework_command))
+        return (cmd,unpack(h, sub_framework_command))
+    elseif ccmd == LC_RPATH
+        return (cmd,unpack(h, rpath_command))
     else
-        error("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
+        info("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
+        return (cmd,dummy_lc())
     end
 end
 
