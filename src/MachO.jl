@@ -13,6 +13,10 @@ module MachO
 # For printing
 import Base: show, print, bytestring
 
+# For endianness-handling
+using StrPack
+import StrPack: unpack, pack
+
 # This package implements the ObjFileBase interface
 import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta
@@ -31,13 +35,6 @@ export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
 # from the appropriate headers on MacOS 10.9
 #
 include("constants.jl")
-
-#
-# StrPack is used mostly for endianness handling
-#
-using StrPack
-
-# MachOHandle
 
 #
 # Represents the actual MachO file
@@ -79,6 +76,10 @@ end
 ################################################################################
 
 abstract MachOLC
+
+# Dummy lc that we use to return when we don't know what a certain load command is
+immutable dummy_lc <: MachOLC
+end
 
 @struct immutable mach_header
     magic::Uint32
@@ -200,19 +201,59 @@ end
     sdk::Uint32
 end
 
-@struct immutable lc_str
+immutable dylib_command <: MachOLC
     offset::Uint32
-end
-
-@struct immutable dylib
-    name::lc_str
     timestamp::Uint32
     current_version::Uint32
     compatibilty::Uint32
+
+    # Read in automatically, when possible, via offset
+    name::String
 end
 
-@struct immutable dylib_command <: MachOLC
-    dylib::dylib
+# Read in a C string, until we reach the end of the string or max out at max_len
+function bytestring(io, max_len)
+    str = Uint8[]
+    idx = 0
+    c = read(io, Uint8)
+    while c != 0x00 && idx < max_len
+        push!(str, c)
+        c = read(io, Uint8)
+        idx += 1
+    end
+    return bytestring(str)
+end
+
+function unpack_lcstr{ioT<:IO}(h::MachOHandle{ioT}, offset, min_offset, max_offset)
+    # Perform sanity checking on offset; if it is too small or too large,
+    # don't try to read the lc_str, just assign it "<lc_str offset corrupt>"
+    if offset >= min_offset && offset < max_offset
+        # Seek to the previously extracted offset, minus minlen
+        skip(h.io, offset - min_offset)
+
+        # Read in the cstring
+        lc_str = bytestring(h.io, max_offset - offset)
+    else
+        # If we are outside the bounds, (either the string begins in the middle
+        # of the rest of the structure, or it begins outside of this load command)
+        # do not attempt to automatically read it
+        lc_str = "<lc_str offset corrupt>"
+    end
+end
+
+
+function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command},cmdsize::Uint32)
+    # Get the offset
+    offset = unpack(h, Uint32)
+
+    # Now get timestamp, current_version and compatibilty
+    timestamp = unpack(h, Uint32)
+    current_version = unpack(h, Uint32)
+    compatibilty = unpack(h, Uint32)
+
+    # Grab our name, if we can (e.g. if offset is within bounds)
+    name = unpack_lcstr(h, offset, 6*sizeof(Uint32), cmdsize)
+    return dylib_command(offset, timestamp, current_version, compatibilty, name)
 end
 
 @struct immutable dyld_info_command <: MachOLC
@@ -237,8 +278,29 @@ end
     size::Uint32
 end
 
-@struct immutable sub_framework_command <: MachOLC
-    umbrella::lc_str
+immutable sub_framework_command <: MachOLC
+    offset::Uint32
+
+    # Read in automatically, when possible, via offset
+    umbrella::String
+end
+
+immutable rpath_command <: MachOLC
+    offset::Uint32
+
+    # Read in automatically, when possible, via offset
+    path::String
+end
+
+for T in [sub_framework_command, rpath_command]
+    @eval function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{$T},cmdsize::Uint32)
+        # Get the offset
+        offset = unpack(h, Uint32)
+
+        # Grab our path if we can (e.g. if offset is within bounds)
+        path = unpack_lcstr(h, offset, 3*sizeof(Uint32), cmdsize)
+        return $T(offset, path)
+    end
 end
 
 @struct immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
@@ -268,6 +330,7 @@ end
     size::Uint32
     align::Uint32
 end
+
 
 ########################### Printing Data Structures ###########################
 #
@@ -435,7 +498,7 @@ import Base: show,
     # Indexing
     length, getindex
 
-import StrPack: unpack, pack
+
 
 #
 # Note that this function is different from ObjFileBase.readmeta
@@ -475,8 +538,8 @@ function readloadcmd(h::MachOHandle)
     elseif ccmd == LC_VERSION_MIN_MACOSX
         return (cmd,unpack(h, version_min_macosx_command))
     elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
-        cmd.cmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
-        return (cmd,unpack(h, dylib_command))
+        ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
+        return (cmd,unpack(h, dylib_command, cmd.cmdsize))
     elseif ccmd == LC_DYLD_INFO
         return (cmd,unpack(h, dyld_info_command))
     elseif ccmd == LC_SOURCE_VERSION
@@ -486,9 +549,12 @@ function readloadcmd(h::MachOHandle)
             ccmd == LC_DYLIB_CODE_SIGN_DRS
         return (cmd,unpack(h, linkedit_data_command))
     elseif ccmd == LC_SUB_FRAMEWORK
-        return (cmd,unpack(h,sub_framework_command))
+        return (cmd,unpack(h, sub_framework_command, cmd.cmdsize))
+    elseif ccmd == LC_RPATH
+        return (cmd,unpack(h, rpath_command, cmd.cmdsize))
     else
-        error("Unimplemented load command $(LCTYPES[cmd.cmd]) (0x$(hex(cmd.cmd)))")
+        info("Unimplemented load command $(LCTYPES[ccmd]) (0x$(hex(ccmd)))")
+        return (cmd,dummy_lc())
     end
 end
 
@@ -513,12 +579,13 @@ end
 immutable LoadCmd{T<:MachOLC}
     h::MachOHandle
     off::Uint64
+    cmd_id::Uint32
     cmd::T
 end
 
 show{T}(io::IO, x::LoadCmd{T}) = (print(io,"0x",hex(x.off,8),":\n "); show(io,x.cmd); print(io,'\n'))
 
-LoadCmd{T<:MachOLC}(h::MachOHandle, off::Uint64, cmd::T) = LoadCmd{T}(h,off,cmd)
+LoadCmd{T<:MachOLC}(h::MachOHandle, off::Uint64, cmd_id::Uint32, cmd::T) = LoadCmd{T}(h,off,cmd_id,cmd)
 eltype{T<:MachOLC}(::LoadCmd{T}) = T
 
 function LoadCmds(h::MachOHandle, header = nothing, start = -1)
@@ -539,7 +606,7 @@ seek(l::LoadCmds,state) = seek(l.h,state[1]+state[3])
 function next(l::LoadCmds,state)
     seek(l,state)
     cmdh,cmd = readloadcmd(l.h)
-    (LoadCmd(l.h,state[1]+state[3],cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
+    (LoadCmd(l.h,state[1]+state[3],cmdh.cmd,cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
 end
 done(l::LoadCmds,state) = state[2] >= l.ncmds
 
@@ -593,6 +660,12 @@ position{T<:IO}(io::MachOHandle{T}) = position(io.io)-io.start
 
 unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     unpack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
+
+# We do this a lot, let's special-case it
+function unpack{ioT<:IO}(h::MachOHandle{ioT}, ::Type{Uint32})
+    tgtendianness = StrPack.endianness_converters[endianness(h)][2]
+    return tgtendianness(read(h.io,Uint32))
+end
 
 pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     pack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
