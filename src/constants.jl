@@ -138,7 +138,11 @@ end
 end
 
 
-# Load command types
+# Load command types.  Note that we have dropped the LC_REQ_DYLD flag OR'ed
+# into many of these types to aid in easy usage of these constants.  Since
+# the meaning of LC_REQ_DYLD is to denote to the linker which load commands
+# cannot be safely ignored when loading, this does not affect us much, and
+# we disregard it entirely.
 
 const LC_REQ_DYLD = 0x80000000
 @constants LCTYPES "LC_" begin

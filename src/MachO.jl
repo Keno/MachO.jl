@@ -12,6 +12,9 @@ module MachO
 
 # For printing
 import Base: show, print, bytestring
+
+# For endianness-handling
+using StrPack
 import StrPack: unpack, pack
 
 # This package implements the ObjFileBase interface
@@ -32,13 +35,6 @@ export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
 # from the appropriate headers on MacOS 10.9
 #
 include("constants.jl")
-
-#
-# StrPack is used mostly for endianness handling
-#
-using StrPack
-
-# MachOHandle
 
 #
 # Represents the actual MachO file
@@ -206,42 +202,58 @@ end
 end
 
 immutable dylib_command <: MachOLC
-    name::String
+    offset::Uint32
     timestamp::Uint32
     current_version::Uint32
     compatibilty::Uint32
+
+    # Read in automatically, when possible, via offset
+    name::String
 end
 
-# This seems like it's missing from base...
-function bytestring(io::IOStream)
+# Read in a C string, until we reach the end of the string or max out at max_len
+function bytestring(io, max_len)
     str = Uint8[]
+    idx = 0
     c = read(io, Uint8)
-    while c != 0x00
+    while c != 0x00 && idx < max_len
         push!(str, c)
         c = read(io, Uint8)
+        idx += 1
     end
     return bytestring(str)
 end
 
-function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command})
-    # Get endianness converter
-    endianness = h.bswapped ? :SwappedEndian : :NativeEndian
-    tgtendianness = StrPack.endianness_converters[endianness][2]
+function unpack_lcstr{ioT<:IO}(h::MachOHandle{ioT}, offset, min_offset, max_offset)
+    # Perform sanity checking on offset; if it is too small or too large,
+    # don't try to read the lc_str, just assign it "<lc_str offset corrupt>"
+    if offset >= min_offset && offset < max_offset
+        # Seek to the previously extracted offset, minus minlen
+        skip(h.io, offset - min_offset)
 
+        # Read in the cstring
+        lc_str = bytestring(h.io, max_offset - offset)
+    else
+        # If we are outside the bounds, (either the string begins in the middle
+        # of the rest of the structure, or it begins outside of this load command)
+        # do not attempt to automatically read it
+        lc_str = "<lc_str offset corrupt>"
+    end
+end
+
+
+function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command},cmdsize::Uint32)
     # Get the offset
-    offset = tgtendianness(read(h.io, Uint32))
+    offset = unpack(h, Uint32)
 
     # Now get timestamp, current_version and compatibilty
-    timestamp = tgtendianness(read(h.io, Uint32))
-    current_version = tgtendianness(read(h.io, Uint32))
-    compatibilty = tgtendianness(read(h.io, Uint32))
+    timestamp = unpack(h, Uint32)
+    current_version = unpack(h, Uint32)
+    compatibilty = unpack(h, Uint32)
 
-    # Seek to the previously mentioned offset
-    skip(h.io, offset - 6*sizeof(Uint32))
-
-    # Read in a cstring
-    name = bytestring(h.io)
-    return dylib_command(name, timestamp, current_version, compatibilty)
+    # Grab our name, if we can (e.g. if offset is within bounds)
+    name = unpack_lcstr(h, offset, 6*sizeof(Uint32), cmdsize)
+    return dylib_command(offset, timestamp, current_version, compatibilty, name)
 end
 
 @struct immutable dyld_info_command <: MachOLC
@@ -267,25 +279,27 @@ end
 end
 
 immutable sub_framework_command <: MachOLC
+    offset::Uint32
+
+    # Read in automatically, when possible, via offset
     umbrella::String
 end
 
 immutable rpath_command <: MachOLC
+    offset::Uint32
+
+    # Read in automatically, when possible, via offset
     path::String
 end
 
 for T in [sub_framework_command, rpath_command]
-    @eval function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{$T})
-        # Get endianness converter
-        endianness = h.bswapped ? :SwappedEndian : :NativeEndian
-        tgtendianness = StrPack.endianness_converters[endianness][2]
-
+    @eval function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{$T},cmdsize::Uint32)
         # Get the offset
-        offset = tgtendianness(read(h.io, Uint32))
+        offset = unpack(h, Uint32)
 
-        # Seek to the previously mentioned offset
-        skip(h.io, offset - 3*sizeof(Uint32))
-        return $T(bytestring(h.io))
+        # Grab our path if we can (e.g. if offset is within bounds)
+        path = unpack_lcstr(h, offset, 3*sizeof(Uint32), cmdsize)
+        return $T(offset, path)
     end
 end
 
@@ -525,7 +539,7 @@ function readloadcmd(h::MachOHandle)
         return (cmd,unpack(h, version_min_macosx_command))
     elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
         ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
-        return (cmd,unpack(h, dylib_command))
+        return (cmd,unpack(h, dylib_command, cmd.cmdsize))
     elseif ccmd == LC_DYLD_INFO
         return (cmd,unpack(h, dyld_info_command))
     elseif ccmd == LC_SOURCE_VERSION
@@ -535,9 +549,9 @@ function readloadcmd(h::MachOHandle)
             ccmd == LC_DYLIB_CODE_SIGN_DRS
         return (cmd,unpack(h, linkedit_data_command))
     elseif ccmd == LC_SUB_FRAMEWORK
-        return (cmd,unpack(h, sub_framework_command))
+        return (cmd,unpack(h, sub_framework_command, cmd.cmdsize))
     elseif ccmd == LC_RPATH
-        return (cmd,unpack(h, rpath_command))
+        return (cmd,unpack(h, rpath_command, cmd.cmdsize))
     else
         info("Unimplemented load command $(LCTYPES[ccmd]) (0x$(hex(ccmd)))")
         return (cmd,dummy_lc())
@@ -646,6 +660,12 @@ position{T<:IO}(io::MachOHandle{T}) = position(io.io)-io.start
 
 unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     unpack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
+
+# We do this a lot, let's special-case it
+function unpack{ioT<:IO}(h::MachOHandle{ioT}, ::Type{Uint32})
+    tgtendianness = StrPack.endianness_converters[endianness(h)][2]
+    return tgtendianness(read(h.io,Uint32))
+end
 
 pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     pack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
