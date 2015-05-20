@@ -7,7 +7,7 @@ using Base.Meta
 macro constants(array, stripprefix, expr)
     ret = Expr(:block)
     # Initialize the name lookup array
-    push!(ret.args,:(const $array = (Uint32=>ASCIIString)[]))
+    push!(ret.args,:(const $array = Dict{Uint32,ASCIIString}()))
     for e in expr.args
         if !isexpr(e,:const)
             continue
@@ -17,7 +17,7 @@ macro constants(array, stripprefix, expr)
         name = string(eq.args[1])
         name = replace(name,stripprefix,"",1)
         push!(ret.args,e)
-        push!(ret.args,:($array[uint32($(eq.args[1]))] = $name))
+        push!(ret.args,:($array[UInt32($(eq.args[1]))] = $name))
     end
     return esc(ret)
 end
@@ -41,7 +41,7 @@ const CPU_ARCH_ABI64 = 0x01000000
 
 
 @constants CPUTYPES "CPU_TYPE_" begin
-    const CPU_TYPE_ANY          = uint64(-1)
+    const CPU_TYPE_ANY          = reinterpret(UInt32,Int32(-1))
     const CPU_TYPE_VAX          = 1
     # skip
     # skip
