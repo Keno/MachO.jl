@@ -19,7 +19,8 @@ import StrPack: unpack, pack
 
 # This package implements the ObjFileBase interface
 import ObjFileBase
-import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta
+import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
+    strtab_lookup
 
 # Reexports from ObjFileBase
 export sectionsize, sectionoffset, readheader, readmeta
@@ -518,7 +519,7 @@ function readmeta(io::IO,::Type{MachOHandle})
     elseif magic == FAT_CIGAM || magic == FAT_MAGIC
         return FatMachOHandle(io,start)
     else
-        error("Invalid Magic ($(hex(magic)))!")
+        throw(ObjFileBase.MagicMismatch("Invalid Magic ($(hex(magic)))!"))
     end
 end
 
