@@ -20,13 +20,14 @@ import StrPack: unpack, pack
 # This package implements the ObjFileBase interface
 import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
-    strtab_lookup
+    strtab_lookup, debugsections, endianness, load_strtab, deref, sectionname,
+    sectionaddress
 
 # Reexports from ObjFileBase
-export sectionsize, sectionoffset, readheader, readmeta
-
-export readmeta, readheader, LoadCmds, Sections, Symbols, symname, segname,
+export sectionsize, sectionoffset, readheader, readmeta,
     debugsections
+
+export LoadCmds, Sections, Symbols, symname, segname
 
 ############################ Data Structures ###################################
 
@@ -167,6 +168,11 @@ end
     flags::Uint32
     reserved1::Uint32
     reserved2::Uint32
+end
+
+@struct immutable relocation_info <: ObjFileBase.Relocation{MachOHandle}
+    address::Int32
+    target::UInt32
 end
 
 @struct immutable symtab_command <: MachOLC
@@ -634,6 +640,14 @@ immutable Sections
     end
 end
 
+immutable SectionRef{T<:Union(section,section_64)} <: ObjFileBase.SectionRef{MachOHandle}
+    handle::MachOHandle
+    header::T
+end
+deref(x::SectionRef) = x.header
+sectionname(x::SectionRef) = sectionname(deref(x))
+sectionaddress(x::SectionRef) = sectionaddress(deref(x))
+
 length(s::Sections) = s.command.nsects
 function getindex(s::Sections,n)
     if n < 1 || n > length(s)
@@ -641,7 +655,7 @@ function getindex(s::Sections,n)
     end
     sT = isa(s.command,segment_command_64) ? section_64 : section
     seek(s.h,s.start + (n-1)*sizeof(sT))
-    unpack(s.h, sT)
+    SectionRef{sT}(s.h,unpack(s.h, sT))
 end
 
 start(s::Sections) = 1
@@ -649,7 +663,7 @@ done(s::Sections,n) = n > length(s)
 next(s::Sections,n) = (s[n],n+1)
 
 
-for f in (:read,:readuntil,:write)
+for f in (:readuntil,:write)
     @eval $(f){T<:IO}(io::MachOHandle{T},args...) = $(f)(io.io,args...)
 end
 readbytes{T<:IO}(io::MachOHandle{T},num::Integer) = readbytes(io.io,num)
@@ -661,6 +675,37 @@ position{T<:IO}(io::MachOHandle{T}) = position(io.io)-io.start
 
 unpack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
     unpack(h.io,T,h.bswapped ? :SwappedEndian : :NativeEndian)
+
+# Access to relocations
+immutable Relocations
+    sec::SectionRef
+end
+
+immutable RelocationRef <: ObjFileBase.RelocationRef{MachOHandle}
+    h::MachOHandle
+    reloc::relocation_info
+end
+
+deref(x::RelocationRef) = x.reloc
+
+entrysize(s::Relocations) = StrPack.calcsize(relocation_info)
+endof(s::Relocations) = s.sec.header.nrelocs
+length(r::Relocations) = endof(r)
+function getindex(s::Relocations,n)
+    if n < 1 || n > length(s)
+        throw(BoundsError())
+    end
+    offset = sectionoffset(s.sec) + s.sec.header.reloff
+        + (n-1)*entrysize(s)
+    seek(s.sec.handle,offset)
+    RelocationRef(s.sec.handle,unpack(s.sec.handle, relocation_info))
+end
+
+
+start(s::Relocations) = 1
+done(s::Relocations,n) = n > length(s)
+next(s::Relocations,n) = (x=s[n];(x,n+1))
+
 
 # We do this a lot, let's special-case it
 function unpack{ioT<:IO}(h::MachOHandle{ioT}, ::Type{Uint32})
@@ -705,6 +750,15 @@ function getindex(s::Symbols,n)
     unpack(s.h, sT)
 end
 
+immutable StrTab
+    strtab::SectionRef
+end
+function strtab_lookup(s::StrTab,index)
+    seek(s.strtab.handle,sectionoffset(s.strtab)+index)
+    strip(readuntil(s.strtab.handle,'\0'),'\0')
+end
+load_strtab(strtab::SectionRef) = StrTab(strtab)
+
 function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
     seek(io,command.stroff+offset)
     strip(readuntil(io,'\0'),'\0')
@@ -714,7 +768,8 @@ symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, comma
 symname(x::LoadCmd{symtab_command}, sym) = symname(x.h, x.cmd, sym)
 segname(x::Union(segment_command_64,section_64)) = x.segname
 segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
-sectname(x::section_64) = x.sectname
+sectionname(x::section_64) = x.sectname
+sectionaddress(x::section_64) = x.addr
 
 ### Fat Handle
 immutable FatMachOHandle
@@ -766,8 +821,8 @@ using DWARF
 
 function debugsections{T<:segment_commands}(seg::LoadCmd{T})
     sects = collect(Sections(seg))
-    snames = map(sectname,sects)
-    sections = Dict{ASCIIString,section_64}()
+    snames = map(sectionname,sects)
+    sections = Dict{ASCIIString,SectionRef}()
     for i in 1:length(snames)
         # remove leading "__"
         ind = findfirst(DWARF.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
@@ -776,6 +831,15 @@ function debugsections{T<:segment_commands}(seg::LoadCmd{T})
         end
     end
     sections
+end
+
+function debugsections(oh::MachOHandle)
+    segs = collect(filter(LoadCmds(oh)) do lc
+        isa(lc.cmd, segment_commands) && segname(lc) == "__DWARF"
+    end)
+    isempty(segs) && error("No debug sections present")
+    @assert length(segs) == 1
+    ObjFileBase.DebugSections(oh,debugsections(first(segs)))
 end
 
 end # module
