@@ -12,7 +12,7 @@ VERSION >= v"0.4.0-dev+6641" && __precompile__()
 module MachO
 
 # For printing
-import Base: show, print, bytestring
+import Base: show, print, bytestring, showcompact
 
 # For endianness-handling
 using StrPack
@@ -22,7 +22,7 @@ import StrPack: unpack, pack
 import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
     strtab_lookup, debugsections, endianness, load_strtab, deref, sectionname,
-    sectionaddress
+    sectionaddress, handle, symbolnum, printfield
 
 # For MachO datatypes (e.g. fixed size string)
 import Base: ==, *
@@ -32,6 +32,11 @@ export sectionsize, sectionoffset, readheader, readmeta,
     debugsections
 
 export LoadCmds, Sections, Symbols, symname, segname
+
+# Tree Interface for visualization
+using AbstractTrees
+
+import AbstractTrees: children
 
 ############################ Data Structures ###################################
 
@@ -107,6 +112,9 @@ end
     flags::UInt32
     reserved::UInt32
 end
+mach_header_64(magic,cputype,cpusubtype,filetype,ncmds,sizeofcmds,flags) =
+    mach_header_64(magic,cputype,cpusubtype,filetype,ncmds,sizeofcmds,flags,0)
+
 
 @struct immutable load_command
     cmd::UInt32
@@ -185,6 +193,7 @@ end
     stroff::UInt32
     strsize::UInt32
 end
+symtab_command() = symtab_command(0,0,0,0)
 
 @struct immutable dysymtab_command <: MachOLC
     ilocalsym::UInt32
@@ -358,15 +367,15 @@ end
 show(io::IO,x::small_fixed_string) = show(io,bytestring(x))
 print(io::IO,x::small_fixed_string) = print(io,bytestring(x))
 
+# These can all be made a lot faster if they ever show up in a profile
+Base.isempty(x::small_fixed_string) = isempty(bytestring(x))
+Base.length(x::small_fixed_string) = length(bytestring(x))
+
 ==(x::small_fixed_string,y::AbstractString) = bytestring(x) == y
 ==(x::AbstractString,y::small_fixed_string) = y==x
 
 *(a::ASCIIString,b::small_fixed_string) = a*bytestring(b)
 
-function printfield(io::IO,string,fieldlength)
-    print(io," "^max(fieldlength-length(string),0))
-    print(io,string)
-end
 
 # TODO: Implement
 printflags(io,flags) = nothing
@@ -593,6 +602,11 @@ immutable LoadCmd{T<:MachOLC}
     cmd_id::UInt32
     cmd::T
 end
+handle(lc::LoadCmd) = lc.h
+
+function children(lc::LoadCmd)
+    isa(lc.cmd, segment_commands) ? Sections(lc) : ()
+end
 
 show{T}(io::IO, x::LoadCmd{T}) = (print(io,"0x",hex(x.off,8),":\n "); show(io,x.cmd); print(io,'\n'))
 
@@ -608,6 +622,7 @@ function LoadCmds(h::MachOHandle, header = nothing, start = -1)
     end
     LoadCmds(h,start,header.ncmds,header.sizeofcmds)
 end
+children(h::MachOHandle) = LoadCmds(h)
 
 # A tuple of the position before the current load command,
 # the number of the load command and the size of the current load
@@ -642,6 +657,16 @@ immutable Sections
         start = segment.off + sizeof(eltype(segment)) + sizeof(load_command)
         new(segment.h,segment.cmd,start)
     end
+end
+
+# Covenience function for the (common) case where the object
+# only has one segment
+function Sections(h::MachOHandle)
+    seglcs = collect(filter(LoadCmds(h)) do lc
+        isa(lc.cmd, segment_commands)
+    end)
+    @assert length(seglcs) == 1
+    Sections(seglcs[])
 end
 
 immutable SectionRef{T<:Union{section,section_64}} <: ObjFileBase.SectionRef{MachOHandle}
@@ -694,13 +719,13 @@ end
 deref(x::RelocationRef) = x.reloc
 
 entrysize(s::Relocations) = StrPack.calcsize(relocation_info)
-endof(s::Relocations) = s.sec.header.nrelocs
+endof(s::Relocations) = s.sec.header.nreloc
 length(r::Relocations) = endof(r)
 function getindex(s::Relocations,n)
     if n < 1 || n > length(s)
         throw(BoundsError())
     end
-    offset = sectionoffset(s.sec) + s.sec.header.reloff
+    offset = s.sec.header.reloff
         + (n-1)*entrysize(s)
     seek(s.sec.handle,offset)
     RelocationRef(s.sec.handle,unpack(s.sec.handle, relocation_info))
@@ -729,30 +754,91 @@ end
 sectionsize(sect::Union{section,section_64}) = sect.size
 sectionoffset(sect::Union{section,section_64}) = sect.offset
 
-# Access to Symbols
+### Access to Symbols
+
 immutable Symbols
-    h::MachOHandle
-    command::symtab_command
-    function Symbols(h::MachOHandle, segment::symtab_command)
-        new(h,segment,start)
+    lc::LoadCmd{symtab_command}
+end
+symname(syms::Symbols, sym) = symname(syms.lc, sym)
+
+immutable SymbolRef <: ObjFileBase.SymbolRef{MachOHandle}
+    symbols::Symbols
+    num::UInt16
+    entry::ObjFileBase.SymtabEntry{MachOHandle}
+end
+symbolnum(x::SymbolRef) = x.num
+handle(x::SymbolRef) = x.handle
+
+isglobal(x) = (x.n_type & N_EXT) != 0
+islocal(x) = !isglobal(x) && ((x.n_type & N_UNDF) == 0)
+isweak(x) = (x.n_desc & (N_WEAK_REF | N_WEAK_DEF)) != 0
+isdebug(x) = (x.n_type & N_TYPE) == N_STAB
+
+# Symbol printing stuff
+function showcompact(io::IO, x::SymbolRef)
+    print(io,'[')
+    printfield(io,dec(symbolnum(x)),5)
+    print(io,"] ")
+    showcompact(io, x.entry; syms = x.symbols, sections = Sections(handle(x.symbols.lc)))
+end
+
+# Try to follow the same format as llvm-objdump
+function showcompact(io::IO,x::ObjFileBase.SymtabEntry{MachOHandle};
+        syms = nothing, sections = nothing)
+    # Value
+    print(io,string("0x",hex(x.n_value,2*sizeof(x.n_value))))
+    print(io," ")
+
+    # Symbol flags
+    print(io, isglobal(x) ? "g" : islocal(x) ? "l" : "-")
+    print(io, isweak(x) ? "w" : "-")
+    print(io, "-"^3) # Unsupported
+    print(io, isdebug(x) ? "d" : "-")
+
+    # Skip Symbol type (TODO)
+    print(io, " ")
+
+    print(io, " ")
+    if (x.n_type & N_TYPE) == N_UNDF && isglobal(x)
+            printfield(io,
+                x.n_value != 0 ? "*COM*" : "*UND*",
+                20; align = :left)
+    elseif (x.n_type & N_TYPE) == N_ABS
+        printfield(io,"*ABS*",20; align = :left)
+    elseif sections !== nothing
+        printfield(io, sectionname(sections[x.n_sect]), 20; align = :left)
+    else
+        printfield(io, "Section #$(x.n_sect)", 20; align = :left)
     end
-    function Symbols(lc::LoadCmd{symtab_command})
-        new(lc.h,lc.cmd)
+    print(io, " ")
+
+    if syms !== nothing
+        print(io,symname(syms, x))
+    else
+        print(io,"@",x.n_strx)
     end
+end
+
+function Symbols(oh::MachOHandle)
+    symlcs = collect(filter(LoadCmds(oh)) do lc
+        isa(lc.cmd, symtab_command)
+    end)
+    @assert length(symlcs) == 1
+    Symbols(symlcs[])
 end
 
 start(s::Symbols) = 1
 done(s::Symbols,n) = n > length(s)
 next(s::Symbols,n) = (s[n],n+1)
 
-length(s::Symbols) = s.command.nsyms
+length(s::Symbols) = s.lc.cmd.nsyms
 function getindex(s::Symbols,n)
     if n < 1 || n > length(s)
         throw(BoundsError())
     end
-    sT = s.h.is64 ? nlist_64 : nlist
-    seek(s.h,s.command.symoff + (n-1)*sizeof(sT))
-    unpack(s.h, sT)
+    sT = s.lc.h.is64 ? nlist_64 : nlist
+    seek(s.lc.h,s.lc.cmd.symoff + (n-1)*sizeof(sT))
+    SymbolRef(s, n-1, unpack(s.lc.h, sT))
 end
 
 immutable StrTab
@@ -820,6 +906,10 @@ end
 
 include("compact_unwind.jl")
 
+### Relocation Support
+
+include("relocate.jl")
+
 ### DWARF support
 
 using DWARF
@@ -840,7 +930,8 @@ end
 
 function debugsections(oh::MachOHandle)
     segs = collect(filter(LoadCmds(oh)) do lc
-        isa(lc.cmd, segment_commands) && segname(lc) == "__DWARF"
+        isa(lc.cmd, segment_commands) &&
+            (segname(lc) == "__DWARF" || isempty(segname(lc)))
     end)
     isempty(segs) && error("No debug sections present")
     @assert length(segs) == 1

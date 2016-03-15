@@ -66,6 +66,29 @@ end
 
 # TODO subtype constants
 
+@constants NLISTTYPES "N_" begin
+    const N_STAB         = 0xe0
+    const N_PEXT         = 0x10
+    const N_TYPE         = 0x0e
+    const N_EXT          = 0x01
+    const N_UNDF         = 0x00
+    const N_ABS          = 0x02
+    const N_SECT         = 0x0e
+    const N_PBUD         = 0x0c
+    const N_INDR         = 0x0a
+end
+
+@constants NDESC "N_" begin
+    const N_WEAK_REF      = 0x0040
+    const N_WEAK_DEF      = 0x0080
+    const N_ARM_THUMB_DEF = 0x0008
+end
+
+const N_REF_TO_WEAK = N_WEAK_DEF
+
+const NO_SECT  = 0x0
+const MAX_SECT = 0xff
+
 @constants FILETYPES "MH_" begin
     const MH_OBJECT      = 0x1     # relocatable object file
     const MH_EXECUTE     = 0x2     # demand paged executable file
@@ -363,3 +386,17 @@ end
     const UNWIND_SECOND_LEVEL_REGULAR       = 2
     const UNWIND_SECOND_LEVEL_COMPRESSED    = 3
 end
+
+@constants X86_64_RELOC "X86_64_RELOC_" begin
+    const X86_64_RELOC_UNSIGNED        = 0
+    const X86_64_RELOC_SIGNED          = 1
+    const X86_64_RELOC_BRANCH          = 2
+    const X86_64_RELOC_GOT_LOAD        = 3
+    const X86_64_RELOC_GOT             = 4
+    const X86_64_RELOC_SUBTRACTOR      = 5
+    const X86_64_RELOC_SIGNED_1        = 6
+    const X86_64_RELOC_SIGNED_2        = 7
+    const X86_64_RELOC_SIGNED_4        = 8
+    const X86_64_RELOC_TLV             = 9
+end
+
