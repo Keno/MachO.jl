@@ -841,9 +841,11 @@ function getindex(s::Symbols,n)
     SymbolRef(s, n-1, unpack(s.lc.h, sT))
 end
 
-immutable StrTab
+immutable StrTab <: ObjFileBase.StrTab
     strtab::SectionRef
 end
+ObjFileBase.StrTab(s::SectionRef) = StrTab(s)
+
 function strtab_lookup(s::StrTab,index)
     seek(s.strtab.handle,sectionoffset(s.strtab)+index)
     strip(readuntil(s.strtab.handle,'\0'),'\0')

@@ -46,7 +46,6 @@ function relocate!(buffer, h; LOI = nothing, debug_only = true)
               Value = getSectionLoadAddress(LOI, Value) - deref(Value).addr
               rta = compute_relocation(header, reloc, Value)
               seek(buffer, sectionoffset(sec) + deref(reloc).address)
-              @show rta
               write(buffer, rta.size == 8 ? rta.value :
                   rta.size == 4 ? convert(UInt32,rta.value) :
                   rta.size == 2 ? convert(UInt16,rta.value) :
@@ -58,7 +57,6 @@ function relocate!(buffer, h; LOI = nothing, debug_only = true)
 end
 
 function compute_relocation(header, reloc, Value)
-    @show Value
     if header.cputype == CPU_TYPE_X86_64
         compute_X86_64(reloc, Value)
     end
