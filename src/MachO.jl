@@ -674,6 +674,7 @@ immutable SectionRef{T<:Union{section,section_64}} <: ObjFileBase.SectionRef{Mac
     header::T
 end
 deref(x::SectionRef) = x.header
+handle(x::SectionRef) = x.handle
 sectionname(x::SectionRef) = sectionname(deref(x))
 sectionaddress(x::SectionRef) = sectionaddress(deref(x))
 seek(x::SectionRef, off) = seek(x.handle, x.header.offset + off)
@@ -725,8 +726,8 @@ function getindex(s::Relocations,n)
     if n < 1 || n > length(s)
         throw(BoundsError())
     end
-    offset = s.sec.header.reloff
-        + (n-1)*entrysize(s)
+    offset = s.sec.header.reloff +
+        (n-1)*entrysize(s)
     seek(s.sec.handle,offset)
     RelocationRef(s.sec.handle,unpack(s.sec.handle, relocation_info))
 end
