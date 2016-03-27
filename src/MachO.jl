@@ -66,9 +66,6 @@ end
 
 endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
 
-MachOHandle{T<:IO}(io::T,start::Int,bswapped::Bool,is64::Bool) =
-    MachOHandle{T}(io,start,bswapped,is64)
-
 function show(io::IO,h::MachOHandle)
     print(io,"MachO handle (")
     print(io,h.is64?"64-bit":"32-bit")
@@ -609,8 +606,6 @@ function children(lc::LoadCmd)
 end
 
 show{T}(io::IO, x::LoadCmd{T}) = (print(io,"0x",hex(x.off,8),":\n "); show(io,x.cmd); print(io,'\n'))
-
-LoadCmd{T<:MachOLC}(h::MachOHandle, off::UInt64, cmd_id::UInt32, cmd::T) = LoadCmd{T}(h,off,cmd_id,cmd)
 eltype{T<:MachOLC}(::LoadCmd{T}) = T
 
 function LoadCmds(h::MachOHandle, header = nothing, start = -1)
