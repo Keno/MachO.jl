@@ -15,8 +15,8 @@ module MachO
 import Base: show, print, bytestring, showcompact
 
 # For endianness-handling
-using StrPack
-import StrPack: unpack, pack
+using StructIO
+import StructIO: unpack
 
 # This package implements the ObjFileBase interface
 import ObjFileBase
@@ -714,7 +714,7 @@ end
 
 deref(x::RelocationRef) = x.reloc
 
-entrysize(s::Relocations) = StrPack.calcsize(relocation_info)
+entrysize(s::Relocations) = sizeof(relocation_info)
 endof(s::Relocations) = s.sec.header.nreloc
 length(r::Relocations) = endof(r)
 function getindex(s::Relocations,n)
@@ -733,10 +733,8 @@ done(s::Relocations,n) = n > length(s)
 next(s::Relocations,n) = (x=s[n];(x,n+1))
 
 
-# We do this a lot, let's special-case it
 function unpack{ioT<:IO}(h::MachOHandle{ioT}, ::Type{UInt32})
-    tgtendianness = StrPack.endianness_converters[endianness(h)][2]
-    return tgtendianness(read(h.io,UInt32))
+    return unpack(h, UInt32, endianness(h))
 end
 
 pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
@@ -910,17 +908,15 @@ include("relocate.jl")
 
 ### DWARF support
 
-using DWARF
-
 function debugsections{T<:segment_commands}(seg::LoadCmd{T})
     sects = collect(Sections(seg))
     snames = map(sectionname,sects)
     sections = Dict{ASCIIString,SectionRef}()
     for i in 1:length(snames)
         # remove leading "__"
-        ind = findfirst(DWARF.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
+        ind = findfirst(ObjFileBase.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
         if ind != 0
-            sections[DWARF.DEBUG_SECTIONS[ind]] = sects[i]
+            sections[ObjFileBase.DEBUG_SECTIONS[ind]] = sects[i]
         end
     end
     sections
