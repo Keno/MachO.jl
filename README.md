@@ -1,6 +1,6 @@
 # MachO
 
-[![Build Status](https://travis-ci.org/loladiro/MachO.jl.png)](https://travis-ci.org/loladiro/MachO.jl)
+[![Build Status](https://travis-ci.org/Keno/MachO.jl.png)](https://travis-ci.org/Keno/MachO.jl)
 
 
 # Usage
