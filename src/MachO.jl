@@ -22,7 +22,7 @@ import StructIO: unpack
 import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
     strtab_lookup, debugsections, endianness, load_strtab, deref, sectionname,
-    sectionaddress, handle, symbolnum, printfield
+    sectionaddress, handle, symbolnum, printfield, symname, symbolvalue, isundef
 
 # For MachO datatypes (e.g. fixed size string)
 import Base: ==, *
@@ -31,7 +31,7 @@ import Base: ==, *
 export sectionsize, sectionoffset, readheader, readmeta,
     debugsections
 
-export LoadCmds, Sections, Symbols, symname, segname
+export LoadCmds, Symbols, symname, segname
 
 # Tree Interface for visualization
 using AbstractTrees
@@ -63,6 +63,7 @@ immutable MachOHandle{T<:IO} <: ObjectHandle
     # Whether or not the file is 64bit
     is64::Bool
 end
+Base.eof(handle::MachOHandle) = eof(handle.io)
 
 endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
 
@@ -599,6 +600,7 @@ immutable LoadCmd{T<:MachOLC}
     cmd_id::UInt32
     cmd::T
 end
+deref(lc::LoadCmd) = lc.cmd
 handle(lc::LoadCmd) = lc.h
 
 function children(lc::LoadCmd)
@@ -629,13 +631,14 @@ function next(l::LoadCmds,state)
     cmdh,cmd = readloadcmd(l.h)
     (LoadCmd(l.h,state[1]+state[3],cmdh.cmd,cmd),(state[1]+state[3],state[2]+1,cmdh.cmdsize))
 end
-done(l::LoadCmds,state) = state[2] >= l.ncmds
+length(l::LoadCmds) = l.ncmds
+done(l::LoadCmds,state) = state[2] >= length(l)
 
 # Access to sections
 
 typealias segment_commands Union{segment_command_64,segment_command}
 
-immutable Sections
+immutable Sections <: ObjFileBase.Sections
     h::MachOHandle
     command::segment_commands
     start::Int
@@ -653,6 +656,9 @@ immutable Sections
         new(segment.h,segment.cmd,start)
     end
 end
+ObjFileBase.Sections(segment::LoadCmd) = Sections(segment)
+ObjFileBase.Sections(h::MachOHandle, args...) = Sections(h,args...)
+ObjFileBase.mangle_sname(h::MachOHandle, name) = string("__", name)
 
 # Covenience function for the (common) case where the object
 # only has one segment
@@ -660,7 +666,7 @@ function Sections(h::MachOHandle)
     seglcs = collect(filter(LoadCmds(h)) do lc
         isa(lc.cmd, segment_commands)
     end)
-    @assert length(seglcs) == 1
+    # @assert length(seglcs) == 1
     Sections(seglcs[])
 end
 
@@ -672,7 +678,6 @@ deref(x::SectionRef) = x.header
 handle(x::SectionRef) = x.handle
 sectionname(x::SectionRef) = sectionname(deref(x))
 sectionaddress(x::SectionRef) = sectionaddress(deref(x))
-seek(x::SectionRef, off) = seek(x.handle, x.header.offset + off)
 
 length(s::Sections) = s.command.nsects
 function getindex(s::Sections,n)
@@ -734,7 +739,7 @@ next(s::Relocations,n) = (x=s[n];(x,n+1))
 
 
 function unpack{ioT<:IO}(h::MachOHandle{ioT}, ::Type{UInt32})
-    return unpack(h, UInt32, endianness(h))
+    return unpack(h.io, UInt32, endianness(h))
 end
 
 pack{T,ioT<:IO}(h::MachOHandle{ioT},::Type{T}) =
@@ -745,8 +750,12 @@ function readheader(h::MachOHandle)
     unpack(h,h.is64 ? mach_header_64 : mach_header)
 end
 
+ObjFileBase.isrelocatable(handle::MachOHandle) =
+    readheader(handle).filetype == MachO.MH_OBJECT
+
 sectionsize(sect::Union{section,section_64}) = sect.size
-sectionoffset(sect::Union{section,section_64}) = sect.offset
+# In non-relocatable files, address and offset are the same and offset is 0
+sectionoffset(sect::Union{section,section_64}) = sect.offset == 0 ? sect.addr : sect.offset
 
 ### Access to Symbols
 
@@ -754,19 +763,23 @@ immutable Symbols
     lc::LoadCmd{symtab_command}
 end
 symname(syms::Symbols, sym) = symname(syms.lc, sym)
+ObjFileBase.StrTab(s::Symbols) = ObjFileBase.StrTab(s.lc)
 
 immutable SymbolRef <: ObjFileBase.SymbolRef{MachOHandle}
     symbols::Symbols
     num::UInt16
     entry::ObjFileBase.SymtabEntry{MachOHandle}
 end
+deref(x::SymbolRef) = x.entry
 symbolnum(x::SymbolRef) = x.num
+symbolvalue(x::SymbolRef, sects) = deref(x).n_value
 handle(x::SymbolRef) = x.handle
 
 isglobal(x) = (x.n_type & N_EXT) != 0
 islocal(x) = !isglobal(x) && ((x.n_type & N_UNDF) == 0)
 isweak(x) = (x.n_desc & (N_WEAK_REF | N_WEAK_DEF)) != 0
 isdebug(x) = (x.n_type & N_TYPE) == N_STAB
+isundef(x::ObjFileBase.SymtabEntry{MachOHandle}) = (x.n_type & N_UNDF) != 0
 
 # Symbol printing stuff
 function showcompact(io::IO, x::SymbolRef)
@@ -835,16 +848,28 @@ function getindex(s::Symbols,n)
     SymbolRef(s, n-1, unpack(s.lc.h, sT))
 end
 
-immutable StrTab <: ObjFileBase.StrTab
+immutable SectionStrTab <: ObjFileBase.StrTab
     strtab::SectionRef
 end
-ObjFileBase.StrTab(s::SectionRef) = StrTab(s)
+immutable OffsetStrTab <: ObjFileBase.StrTab
+    h::MachOHandle
+    offset::UInt
+    size::UInt
+end
+ObjFileBase.StrTab(s::SectionRef) = SectionStrTab(s)
+ObjFileBase.StrTab(s::LoadCmd{symtab_command}) =
+    OffsetStrTab(handle(s),deref(s).stroff,deref(s).strsize)
 
-function strtab_lookup(s::StrTab,index)
+function strtab_lookup(s::SectionStrTab,index)
     seek(s.strtab.handle,sectionoffset(s.strtab)+index)
     strip(readuntil(s.strtab.handle,'\0'),'\0')
 end
-load_strtab(strtab::SectionRef) = StrTab(strtab)
+function strtab_lookup(s::OffsetStrTab,index)
+    @assert index < s.size
+    seek(s.h,s.offset+index)
+    strip(readuntil(s.h,'\0'),'\0')
+end
+load_strtab(strtab::SectionRef) = SectionStrTab(strtab)
 
 function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
     seek(io,command.stroff+offset)
@@ -852,6 +877,7 @@ function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
 end
 
 symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, command, sym.n_strx)
+symname(sym::SymbolRef; strtab = StrTab(sym.syms), kwargs...) = strtab_lookup(strtab, deref(sym).n_strx)
 symname(x::LoadCmd{symtab_command}, sym) = symname(x.h, x.cmd, sym)
 segname(x::Union{segment_command_64,section_64}) = x.segname
 segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
