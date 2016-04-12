@@ -400,3 +400,18 @@ end
     const X86_64_RELOC_TLV             = 9
 end
 
+@constants X86_THREAD_FLAVORS "" begin
+    const x86_THREAD_STATE32    = 1
+    const x86_FLOAT_STATE32     = 2
+    const x86_EXCEPTION_STATE32 = 3
+    const x86_THREAD_STATE64    = 4
+    const x86_FLOAT_STATE64     = 5
+    const x86_EXCEPTION_STATE64 = 6
+    const x86_THREAD_STATE      = 7
+    const x86_FLOAT_STATE       = 8
+    const x86_EXCEPTION_STATE   = 9
+    const x86_DEBUG_STATE32     = 10
+    const x86_DEBUG_STATE64     = 11
+    const x86_DEBUG_STATE       = 12
+end
+

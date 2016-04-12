@@ -63,6 +63,7 @@ immutable MachOHandle{T<:IO} <: ObjectHandle
     # Whether or not the file is 64bit
     is64::Bool
 end
+ObjFileBase.handle(handle::MachOHandle) = handle
 Base.eof(handle::MachOHandle) = eof(handle.io)
 
 endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
@@ -126,6 +127,12 @@ end
 
 @struct immutable uuid_command <: MachOLC
     uuid::UInt128
+end
+
+immutable thread_command <: MachOLC
+    flavor::UInt32
+    count::UInt32
+    data::Vector{UInt}
 end
 
 @struct immutable segment_command <: MachOLC
@@ -229,6 +236,10 @@ immutable dylib_command <: MachOLC
     name::AbstractString
 end
 
+immutable dylinker_command <: MachOLC
+    name::AbstractString
+end
+
 # Read in a C string, until we reach the end of the string or max out at max_len
 function bytestring(io, max_len)
     str = UInt8[]
@@ -272,6 +283,11 @@ function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command},cmdsize::UInt
     # Grab our name, if we can (e.g. if offset is within bounds)
     name = unpack_lcstr(h, offset, 6*sizeof(UInt32), cmdsize)
     return dylib_command(offset, timestamp, current_version, compatibilty, name)
+end
+
+function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylinker_command},cmdsize::UInt32)
+    offset = unpack(h, UInt32)
+    return dylinker_command(unpack_lcstr(h, offset, 6*sizeof(UInt32), cmdsize))
 end
 
 @struct immutable dyld_info_command <: MachOLC
@@ -556,8 +572,11 @@ function readloadcmd(h::MachOHandle)
     elseif ccmd == LC_VERSION_MIN_MACOSX
         return (cmd,unpack(h, version_min_macosx_command))
     elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
-        ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
+            ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
         return (cmd,unpack(h, dylib_command, cmd.cmdsize))
+    elseif ccmd == LC_ID_DYLINKER || ccmd == LC_LOAD_DYLINKER ||
+            ccmd == LC_DYLD_ENVIRONMENT
+        return (cmd,unpack(h, dylinker_command, cmd.cmdsize))
     elseif ccmd == LC_DYLD_INFO
         return (cmd,unpack(h, dyld_info_command))
     elseif ccmd == LC_SOURCE_VERSION
@@ -570,6 +589,11 @@ function readloadcmd(h::MachOHandle)
         return (cmd,unpack(h, sub_framework_command, cmd.cmdsize))
     elseif ccmd == LC_RPATH
         return (cmd,unpack(h, rpath_command, cmd.cmdsize))
+    elseif ccmd == LC_UNIXTHREAD
+        flavor = read(h, UInt32)
+        count = read(h, UInt32)
+        data = read(h, UInt, div(cmd.cmdsize - 4sizeof(UInt32),sizeof(UInt)))
+        return (cmd,thread_command(flavor, count, data))
     else
         info("Unimplemented load command $(LCTYPES[ccmd]) (0x$(hex(ccmd)))")
         return (cmd,dummy_lc())
@@ -656,6 +680,7 @@ immutable Sections <: ObjFileBase.Sections
         new(segment.h,segment.cmd,start)
     end
 end
+ObjFileBase.handle(sects::Sections) = sects.h
 ObjFileBase.Sections(segment::LoadCmd) = Sections(segment)
 ObjFileBase.Sections(h::MachOHandle, args...) = Sections(h,args...)
 ObjFileBase.mangle_sname(h::MachOHandle, name) = string("__", name)
