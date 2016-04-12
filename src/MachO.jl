@@ -240,6 +240,17 @@ immutable dylinker_command <: MachOLC
     name::AbstractString
 end
 
+@struct immutable routines_command_64 <: MachOLC
+    init_address::UInt64
+    init_module::UInt64
+    reserverd::NTuple{6, UInt64}
+end
+
+immutable sub_client_command  <: MachOLC
+    name::AbstractString
+end
+
+
 # Read in a C string, until we reach the end of the string or max out at max_len
 function bytestring(io, max_len)
     str = UInt8[]
@@ -285,9 +296,10 @@ function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylib_command},cmdsize::UInt
     return dylib_command(offset, timestamp, current_version, compatibilty, name)
 end
 
-function unpack{ioT<:IO}(h::MachOHandle{ioT},::Type{dylinker_command},cmdsize::UInt32)
+function unpack{ioT<:IO}(h::MachOHandle{ioT},
+    T::Union{Type{dylinker_command},Type{sub_client_command}},cmdsize::UInt32)
     offset = unpack(h, UInt32)
-    return dylinker_command(unpack_lcstr(h, offset, 6*sizeof(UInt32), cmdsize))
+    return T(unpack_lcstr(h, offset, 6*sizeof(UInt32), cmdsize))
 end
 
 @struct immutable dyld_info_command <: MachOLC
@@ -572,7 +584,8 @@ function readloadcmd(h::MachOHandle)
     elseif ccmd == LC_VERSION_MIN_MACOSX
         return (cmd,unpack(h, version_min_macosx_command))
     elseif ccmd == LC_ID_DYLIB || ccmd == LC_LOAD_DYLIB ||
-            ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB
+            ccmd == LC_REEXPORT_DYLIB || ccmd == LC_LOAD_UPWARD_DYLIB ||
+            ccmd == LC_LOAD_WEAK_DYLIB
         return (cmd,unpack(h, dylib_command, cmd.cmdsize))
     elseif ccmd == LC_ID_DYLINKER || ccmd == LC_LOAD_DYLINKER ||
             ccmd == LC_DYLD_ENVIRONMENT
@@ -594,6 +607,10 @@ function readloadcmd(h::MachOHandle)
         count = read(h, UInt32)
         data = read(h, UInt, div(cmd.cmdsize - 4sizeof(UInt32),sizeof(UInt)))
         return (cmd,thread_command(flavor, count, data))
+    elseif ccmd == LC_ROUTINES_64
+        return (cmd,unpack(h, routines_command_64))
+    elseif ccmd == LC_SUB_CLIENT
+        return (cmd,unpack(h, sub_client_command, cmd.cmdsize))
     else
         info("Unimplemented load command $(LCTYPES[ccmd]) (0x$(hex(ccmd)))")
         return (cmd,dummy_lc())
