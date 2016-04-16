@@ -63,6 +63,7 @@ immutable MachOHandle{T<:IO} <: ObjectHandle
     # Whether or not the file is 64bit
     is64::Bool
 end
+__init__() = push!(ObjFileBase.ObjHandles, MachOHandle)
 ObjFileBase.handle(handle::MachOHandle) = handle
 Base.eof(handle::MachOHandle) = eof(handle.io)
 
