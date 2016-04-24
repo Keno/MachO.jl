@@ -1001,4 +1001,6 @@ function debugsections(oh::MachOHandle)
     ObjFileBase.DebugSections(oh,debugsections(first(segs)))
 end
 
+include("precompile.jl")
+
 end # module
