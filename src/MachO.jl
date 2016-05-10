@@ -389,7 +389,7 @@ end
 function bytestring(x::small_fixed_string)
     a8 = reinterpret(UInt8,[x.string])
     z = findfirst(a8,0)
-    ASCIIString(a8[1:(z == 0 ? length(a8) : z-1)])
+    String(a8[1:(z == 0 ? length(a8) : z-1)])
 end
 show(io::IO,x::small_fixed_string) = show(io,bytestring(x))
 print(io::IO,x::small_fixed_string) = print(io,bytestring(x))
@@ -401,7 +401,7 @@ Base.length(x::small_fixed_string) = length(bytestring(x))
 ==(x::small_fixed_string,y::AbstractString) = bytestring(x) == y
 ==(x::AbstractString,y::small_fixed_string) = y==x
 
-*(a::ASCIIString,b::small_fixed_string) = a*bytestring(b)
+*(a::String,b::small_fixed_string) = a*bytestring(b)
 
 
 # TODO: Implement
@@ -465,7 +465,7 @@ function show(io::IO,l::Union{segment_command_64,segment_command})
 end
 
 function sattrs(attributes)
-    strings = ASCIIString[]
+    strings = String[]
     for (k,v) in SECATTRS
         if attributes & k > 0
             push!(strings, v)
@@ -980,7 +980,7 @@ include("relocate.jl")
 function debugsections{T<:segment_commands}(seg::LoadCmd{T})
     sects = collect(Sections(seg))
     snames = map(sectionname,sects)
-    sections = Dict{ASCIIString,SectionRef}()
+    sections = Dict{String,SectionRef}()
     for i in 1:length(snames)
         # remove leading "__"
         ind = findfirst(ObjFileBase.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
