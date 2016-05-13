@@ -680,7 +680,7 @@ done(l::LoadCmds,state) = state[2] >= length(l)
 
 typealias segment_commands Union{segment_command_64,segment_command}
 
-immutable Sections <: ObjFileBase.Sections
+immutable Sections <: ObjFileBase.Sections{MachOHandle}
     h::MachOHandle
     command::segment_commands
     start::Int
