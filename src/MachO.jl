@@ -713,10 +713,11 @@ function Sections(h::MachOHandle)
     Sections(seglcs[])
 end
 
-immutable SectionRef{T<:Union{section,section_64}} <: ObjFileBase.SectionRef{MachOHandle}
+immutable SectionRef{H<:MachOHandle, T<:Union{section,section_64}} <: ObjFileBase.SectionRef{MachOHandle}
     handle::MachOHandle
     header::T
 end
+@Base.pure ObjFileBase.SectionRef{H<:MachOHandle}(::Type{H}) = SectionRef{H}
 deref(x::SectionRef) = x.header
 handle(x::SectionRef) = x.handle
 sectionname(x::SectionRef) = sectionname(deref(x))
@@ -729,7 +730,7 @@ function getindex(s::Sections,n)
     end
     sT = isa(s.command,segment_command_64) ? section_64 : section
     seek(s.h,s.start + (n-1)*sizeof(sT))
-    SectionRef{sT}(s.h,unpack(s.h, sT))
+    SectionRef{typeof(s.h),sT}(s.h,unpack(s.h, sT))
 end
 
 start(s::Sections) = 1
