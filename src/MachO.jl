@@ -31,7 +31,7 @@ import Base: ==, *
 export sectionsize, sectionoffset, readheader, readmeta,
     debugsections
 
-export LoadCmds, Symbols, symname, segname
+export LoadCmds, symname, segname
 
 # Tree Interface for visualization
 using AbstractTrees
@@ -803,9 +803,11 @@ sectionoffset(sect::Union{section,section_64}) = sect.offset == 0 ? sect.addr : 
 
 ### Access to Symbols
 
-immutable Symbols
+immutable Symbols <: ObjFileBase.Symbols{MachOHandle}
     lc::LoadCmd{symtab_command}
 end
+ObjFileBase.Symbols(lc::LoadCmd) = Symbols(lc)
+ObjFileBase.Symbols(h::MachOHandle) = Symbols(h)
 symname(syms::Symbols, sym) = symname(syms.lc, sym)
 ObjFileBase.StrTab(s::Symbols) = ObjFileBase.StrTab(s.lc)
 
