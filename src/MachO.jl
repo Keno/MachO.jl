@@ -253,7 +253,7 @@ end
 
 
 # Read in a C string, until we reach the end of the string or max out at max_len
-function bytestring(io, max_len)
+function read_bytestring(io, max_len)
     str = UInt8[]
     idx = 0
     c = read(io, UInt8)
@@ -262,7 +262,7 @@ function bytestring(io, max_len)
         c = read(io, UInt8)
         idx += 1
     end
-    return bytestring(str)
+    return String(str)
 end
 
 function unpack_lcstr{ioT<:IO}(h::MachOHandle{ioT}, offset, min_offset, max_offset)
@@ -273,7 +273,7 @@ function unpack_lcstr{ioT<:IO}(h::MachOHandle{ioT}, offset, min_offset, max_offs
         skip(h.io, offset - min_offset)
 
         # Read in the cstring
-        lc_str = bytestring(h.io, max_offset - offset)
+        lc_str = read_bytestring(h.io, max_offset - offset)
     else
         # If we are outside the bounds, (either the string begins in the middle
         # of the rest of the structure, or it begins outside of this load command)
