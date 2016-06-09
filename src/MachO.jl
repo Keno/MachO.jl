@@ -813,7 +813,7 @@ ObjFileBase.StrTab(s::Symbols) = ObjFileBase.StrTab(s.lc)
 
 immutable SymbolRef <: ObjFileBase.SymbolRef{MachOHandle}
     symbols::Symbols
-    num::UInt16
+    num::UInt32
     entry::ObjFileBase.SymtabEntry{MachOHandle}
 end
 deref(x::SymbolRef) = x.entry
