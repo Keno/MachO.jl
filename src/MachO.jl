@@ -22,7 +22,8 @@ import StructIO: unpack
 import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
     strtab_lookup, debugsections, endianness, load_strtab, deref, sectionname,
-    sectionaddress, handle, symbolnum, printfield, symname, symbolvalue, isundef
+    sectionaddress, handle, symbolnum, printfield, symname, symbolvalue, isundef,
+    intptr
 
 # For MachO datatypes (e.g. fixed size string)
 import Base: ==, *
@@ -68,6 +69,7 @@ ObjFileBase.handle(handle::MachOHandle) = handle
 Base.eof(handle::MachOHandle) = eof(handle.io)
 
 endianness(oh::MachOHandle) = oh.bswapped ? :SwappedEndian : :NativeEndian
+intptr(oh::MachOHandle) = oh.is64 ? UInt64 : UInt32
 
 function show(io::IO,h::MachOHandle)
     print(io,"MachO handle (")
