@@ -820,7 +820,7 @@ immutable SymbolRef <: ObjFileBase.SymbolRef{MachOHandle}
 end
 deref(x::SymbolRef) = x.entry
 symbolnum(x::SymbolRef) = x.num
-symbolvalue(x::SymbolRef, sects) = deref(x).n_value
+symbolvalue(x::SymbolRef, args...) = deref(x).n_value
 handle(x::SymbolRef) = x.handle
 
 isglobal(x) = (x.n_type & N_EXT) != 0
