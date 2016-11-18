@@ -23,7 +23,7 @@ import ObjFileBase
 import ObjFileBase: sectionsize, sectionoffset, readheader, ObjectHandle, readmeta,
     strtab_lookup, debugsections, endianness, load_strtab, deref, sectionname,
     sectionaddress, handle, symbolnum, printfield, symname, symbolvalue, isundef,
-    intptr
+    intptr, isBSS
 
 # For MachO datatypes (e.g. fixed size string)
 import Base: ==, *
@@ -189,6 +189,7 @@ end
     reserved1::UInt32
     reserved2::UInt32
 end
+isBSS(sec::Union{section, section_64}) = (sec.flags & S_ZEROFILL) != 0
 
 @struct immutable relocation_info <: ObjFileBase.Relocation{MachOHandle}
     address::Int32
