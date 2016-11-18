@@ -189,7 +189,7 @@ end
     reserved1::UInt32
     reserved2::UInt32
 end
-isBSS(sec::Union{section, section_64}) = (sec.flags & S_ZEROFILL) != 0
+isBSS(sec::Union{section, section_64}) = (sec.flags & SECTION_TYPE) == S_ZEROFILL
 
 @struct immutable relocation_info <: ObjFileBase.Relocation{MachOHandle}
     address::Int32
