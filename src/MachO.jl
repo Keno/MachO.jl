@@ -3,16 +3,16 @@
 ## General design philosophy
 #
 # All methods should operate on seekable IO object. In particular this means
-# that the basic interface buffers as little as possible (e.g. the MachOHandle)
-# object does not contain the mach_header.
+# that the basic interface buffers as little as possible (e.g. the MachOHandle
+# object does not contain the mach_header).
 #
 ################################################################################
 
-VERSION >= v"0.4.0-dev+6641" && __precompile__()
+__precompile__()
 module MachO
 
 # For printing
-import Base: show, print, bytestring, showcompact
+import Base: show, print, unsafe_string, showcompact, readuntil
 
 # For endianness-handling
 using StructIO
@@ -94,7 +94,7 @@ abstract MachOLC
 immutable dummy_lc <: MachOLC
 end
 
-@struct immutable mach_header
+@io immutable mach_header
     magic::UInt32
     cputype::UInt32
     cpusubtype::UInt32
@@ -104,7 +104,7 @@ end
     flags::UInt32
 end
 
-@struct immutable mach_header_64
+@io immutable mach_header_64
     magic::UInt32
     cputype::UInt32
     cpusubtype::UInt32
@@ -118,17 +118,17 @@ mach_header_64(magic,cputype,cpusubtype,filetype,ncmds,sizeofcmds,flags) =
     mach_header_64(magic,cputype,cpusubtype,filetype,ncmds,sizeofcmds,flags,0)
 
 
-@struct immutable load_command
+@io immutable load_command
     cmd::UInt32
     cmdsize::UInt32
 end
 
 # A 16 byte string, represented as a UInt128, but shown as a string
-@struct immutable small_fixed_string
+@io immutable small_fixed_string
     string::UInt128
 end
 
-@struct immutable uuid_command <: MachOLC
+@io immutable uuid_command <: MachOLC
     uuid::UInt128
 end
 
@@ -138,7 +138,13 @@ immutable thread_command <: MachOLC
     data::Vector{UInt}
 end
 
-@struct immutable segment_command <: MachOLC
+@io immutable entry_point_command <: MachOLC
+    cmdsize::UInt32
+    entryoff::UInt64
+    stacksize::UInt64
+end
+
+@io immutable segment_command <: MachOLC
     segname::small_fixed_string
     vmaddr::UInt32
     vmsize::UInt32
@@ -150,7 +156,7 @@ end
     flags::UInt32
 end
 
-@struct immutable segment_command_64 <: MachOLC
+@io immutable segment_command_64 <: MachOLC
     segname::small_fixed_string
     vmaddr::UInt64
     vmsize::UInt64
@@ -162,7 +168,7 @@ end
     flags::UInt32
 end
 
-@struct immutable section <: ObjFileBase.Section{MachOHandle}
+@io immutable section <: ObjFileBase.Section{MachOHandle}
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::UInt32
@@ -176,7 +182,7 @@ end
     reserved2::UInt32
 end
 
-@struct immutable section_64 <: ObjFileBase.Section{MachOHandle}
+@io immutable section_64 <: ObjFileBase.Section{MachOHandle}
     sectname::small_fixed_string
     segname::small_fixed_string
     addr::UInt64
@@ -191,12 +197,12 @@ end
 end
 isBSS(sec::Union{section, section_64}) = (sec.flags & SECTION_TYPE) == S_ZEROFILL
 
-@struct immutable relocation_info <: ObjFileBase.Relocation{MachOHandle}
+@io immutable relocation_info <: ObjFileBase.Relocation{MachOHandle}
     address::Int32
     target::UInt32
 end
 
-@struct immutable symtab_command <: MachOLC
+@io immutable symtab_command <: MachOLC
     symoff::UInt32
     nsyms::UInt32
     stroff::UInt32
@@ -204,7 +210,7 @@ end
 end
 symtab_command() = symtab_command(0,0,0,0)
 
-@struct immutable dysymtab_command <: MachOLC
+@io immutable dysymtab_command <: MachOLC
     ilocalsym::UInt32
     nlocalsym::UInt32
     iextdefsym::UInt32
@@ -225,7 +231,7 @@ symtab_command() = symtab_command(0,0,0,0)
     nlocrel::UInt32
 end
 
-@struct immutable version_min_macosx_command <: MachOLC
+@io immutable version_min_macosx_command <: MachOLC
     version::UInt32
     sdk::UInt32
 end
@@ -244,7 +250,7 @@ immutable dylinker_command <: MachOLC
     name::AbstractString
 end
 
-@struct immutable routines_command_64 <: MachOLC
+@io immutable routines_command_64 <: MachOLC
     init_address::UInt64
     init_module::UInt64
     reserverd::NTuple{6, UInt64}
@@ -256,7 +262,7 @@ end
 
 
 # Read in a C string, until we reach the end of the string or max out at max_len
-function read_bytestring(io, max_len)
+function read_unsafe_string(io, max_len)
     str = UInt8[]
     idx = 0
     c = read(io, UInt8)
@@ -276,7 +282,7 @@ function unpack_lcstr{ioT<:IO}(h::MachOHandle{ioT}, offset, min_offset, max_offs
         skip(h.io, offset - min_offset)
 
         # Read in the cstring
-        lc_str = read_bytestring(h.io, max_offset - offset)
+        lc_str = read_unsafe_string(h.io, max_offset - offset)
     else
         # If we are outside the bounds, (either the string begins in the middle
         # of the rest of the structure, or it begins outside of this load command)
@@ -306,7 +312,7 @@ function unpack{ioT<:IO}(h::MachOHandle{ioT},
     return T(unpack_lcstr(h, offset, 6*sizeof(UInt32), cmdsize))
 end
 
-@struct immutable dyld_info_command <: MachOLC
+@io immutable dyld_info_command <: MachOLC
     rebase_off::UInt32
     rebase_size::UInt32
     bind_off::UInt32
@@ -319,11 +325,11 @@ end
     export_size::UInt32
 end
 
-@struct immutable source_version_command <: MachOLC
+@io immutable source_version_command <: MachOLC
     version::UInt64
 end
 
-@struct immutable linkedit_data_command <: MachOLC
+@io immutable linkedit_data_command <: MachOLC
     offset::UInt32
     size::UInt32
 end
@@ -353,7 +359,7 @@ for T in [sub_framework_command, rpath_command]
     end
 end
 
-@struct immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
+@io immutable nlist <: ObjFileBase.SymtabEntry{MachOHandle}
     n_strx::UInt32
     n_type::UInt8
     n_sect::UInt8
@@ -361,7 +367,7 @@ end
     n_value::UInt32
 end
 
-@struct immutable nlist_64 <: ObjFileBase.SymtabEntry{MachOHandle}
+@io immutable nlist_64 <: ObjFileBase.SymtabEntry{MachOHandle}
     n_strx::UInt32
     n_type::UInt8
     n_sect::UInt8
@@ -369,11 +375,11 @@ end
     n_value::UInt64
 end
 
-@struct immutable fat_header
+@io immutable fat_header
     nfat_arch::UInt32
 end
 
-@struct immutable fat_arch
+@io immutable fat_arch
     cputype::UInt32
     cpusubtype::UInt32
     offset::UInt32
@@ -389,22 +395,22 @@ end
 #
 ################################################################################
 
-function bytestring(x::small_fixed_string)
+function unsafe_string(x::small_fixed_string)
     a8 = reinterpret(UInt8,[x.string])
     z = findfirst(a8,0)
     String(a8[1:(z == 0 ? length(a8) : z-1)])
 end
-show(io::IO,x::small_fixed_string) = show(io,bytestring(x))
-print(io::IO,x::small_fixed_string) = print(io,bytestring(x))
+show(io::IO,x::small_fixed_string) = show(io,unsafe_string(x))
+print(io::IO,x::small_fixed_string) = print(io,unsafe_string(x))
 
 # These can all be made a lot faster if they ever show up in a profile
-Base.isempty(x::small_fixed_string) = isempty(bytestring(x))
-Base.length(x::small_fixed_string) = length(bytestring(x))
+Base.isempty(x::small_fixed_string) = isempty(unsafe_string(x))
+Base.length(x::small_fixed_string) = length(unsafe_string(x))
 
-==(x::small_fixed_string,y::AbstractString) = bytestring(x) == y
+==(x::small_fixed_string,y::AbstractString) = unsafe_string(x) == y
 ==(x::AbstractString,y::small_fixed_string) = y==x
 
-*(a::String,b::small_fixed_string) = a*bytestring(b)
+*(a::String,b::small_fixed_string) = a*unsafe_string(b)
 
 
 # TODO: Implement
@@ -542,7 +548,7 @@ end
 
 import Base: show,
     # IO methods
-    read, write, seek, seekstart, position, readuntil, readbytes,
+    read, write, seek, seekstart, position,
     # Iteration
     start, next, done,
     # Indexing
@@ -611,6 +617,8 @@ function readloadcmd(h::MachOHandle)
         count = read(h, UInt32)
         data = read(h, UInt, div(cmd.cmdsize - 4sizeof(UInt32),sizeof(UInt)))
         return (cmd,thread_command(flavor, count, data))
+    elseif ccmd == LC_MAIN
+        return (cmd,unpack(h, entry_point_command))
     elseif ccmd == LC_ROUTINES_64
         return (cmd,unpack(h, routines_command_64))
     elseif ccmd == LC_SUB_CLIENT
@@ -681,7 +689,7 @@ done(l::LoadCmds,state) = state[2] >= length(l)
 
 # Access to sections
 
-typealias segment_commands Union{segment_command_64,segment_command}
+const segment_commands = Union{segment_command_64,segment_command}
 
 immutable Sections <: ObjFileBase.Sections{MachOHandle}
     h::MachOHandle
@@ -744,7 +752,7 @@ next(s::Sections,n) = (s[n],n+1)
 for f in (:readuntil,:write)
     @eval $(f){T<:IO}(io::MachOHandle{T},args...) = $(f)(io.io,args...)
 end
-readbytes{T<:IO}(io::MachOHandle{T},num::Integer) = readbytes(io.io,num)
+read{T<:IO}(io::MachOHandle{T},num::Integer) = read(io.io,num)
 
 
 seek{T<:IO}(io::MachOHandle{T},pos::Integer) = seek(io.io,io.start+pos)
@@ -876,11 +884,9 @@ function showcompact(io::IO,x::ObjFileBase.SymtabEntry{MachOHandle};
 end
 
 function Symbols(oh::MachOHandle)
-    symlcs = collect(filter(LoadCmds(oh)) do lc
-        isa(lc.cmd, symtab_command)
-    end)
+    symlcs = [lc for lc in LoadCmds(oh) if isa(lc.cmd, symtab_command)]
     @assert length(symlcs) == 1
-    Symbols(symlcs[])
+    return Symbols(symlcs[1])
 end
 
 start(s::Symbols) = 1
@@ -926,7 +932,7 @@ function strtable_lookup(io::MachOHandle,command::symtab_command,offset)
 end
 
 symname(io::MachOHandle,command::symtab_command,sym) = strtable_lookup(io, command, sym.n_strx)
-symname(sym::SymbolRef; strtab = StrTab(sym.syms), kwargs...) = strtab_lookup(strtab, deref(sym).n_strx)
+symname(sym::SymbolRef; strtab = ObjFileBase.StrTab(sym.symbols), kwargs...) = strtab_lookup(strtab, deref(sym).n_strx)
 symname(x::LoadCmd{symtab_command}, sym) = symname(x.h, x.cmd, sym)
 segname(x::Union{segment_command_64,section_64}) = x.segname
 segname(x::LoadCmd{segment_command_64}) = segname(x.cmd)
@@ -989,7 +995,7 @@ function debugsections{T<:segment_commands}(seg::LoadCmd{T})
     sections = Dict{String,SectionRef}()
     for i in 1:length(snames)
         # remove leading "__"
-        ind = findfirst(ObjFileBase.DEBUG_SECTIONS,bytestring(snames[i])[3:end])
+        ind = findfirst(ObjFileBase.DEBUG_SECTIONS,unsafe_string(snames[i])[3:end])
         if ind != 0
             sections[ObjFileBase.DEBUG_SECTIONS[ind]] = sects[i]
         end

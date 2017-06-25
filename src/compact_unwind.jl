@@ -1,6 +1,6 @@
 # Compact unwind data structure
 
-@struct immutable unwind_info_section_header
+@io immutable unwind_info_section_header
     version::UInt32
     commonEncodingsArraySectionOffset::UInt32
     commonEncodingsArrayCount::UInt32
@@ -23,7 +23,7 @@ function show(io::IO,h::unwind_info_section_header)
 end
 
 
-@struct immutable unwind_info_section_header_index_entry
+@io immutable unwind_info_section_header_index_entry
     functionOffset::UInt32
     secondLevelPagesSectionOffset::UInt32
     lsdaIndexArraySectionOffset::UInt32
@@ -38,17 +38,17 @@ function show(io::IO,h::unwind_info_section_header_index_entry)
 end
 
 
-@struct immutable unwind_info_section_header_lsda_index_entry
+@io immutable unwind_info_section_header_lsda_index_entry
     functionOffset::UInt32
     lsdaOffset::UInt32
 end
 
-@struct immutable unwind_info_regular_second_level_page_header
+@io immutable unwind_info_regular_second_level_page_header
     entryPageOffset::UInt16
     entryCount::UInt16
 end
 
-@struct immutable unwind_info_compressed_second_level_page_header
+@io immutable unwind_info_compressed_second_level_page_header
     entryPageOff::UInt16
     entryCount::UInt16
     encodingsPageOffset::UInt16
