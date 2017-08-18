@@ -836,7 +836,7 @@ isglobal(x) = (x.n_type & N_EXT) != 0
 islocal(x) = !isglobal(x) && ((x.n_type & N_UNDF) == 0)
 isweak(x) = (x.n_desc & (N_WEAK_REF | N_WEAK_DEF)) != 0
 isdebug(x) = (x.n_type & N_TYPE) == N_STAB
-isundef(x::ObjFileBase.SymtabEntry{MachOHandle}) = (x.n_type & N_UNDF) != 0
+isundef(x::ObjFileBase.SymtabEntry{MachOHandle}) = (x.n_type == N_UNDF) || ((x.n_type & N_EXT) != 0 && (x.n_sect == NO_SECT))
 
 # Symbol printing stuff
 function showcompact(io::IO, x::SymbolRef)
